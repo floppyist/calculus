@@ -1,6 +1,8 @@
 use core::fmt;
 
-use crate::core::{Function, Token};
+use crate::core::Function;
+use crate::core::PreinterceptToken;
+use crate::core::Token;
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum TokenizerState {
@@ -117,6 +119,8 @@ pub fn tokenize(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
         return Err(TokenizerError::BracketNotClosed);
     }
 
+    result = preintercept(result)?;
+
     Ok(result)
 }
 
@@ -148,6 +152,54 @@ fn parse_number(number: &str) -> Result<Token, TokenizerError> {
         Ok(Token::Float(num))
     } else {
         Err(TokenizerError::NaN)
+    }
+}
+
+pub fn preintercept(tokens: Vec<Token>) -> Result<Vec<Token>, TokenizerError> {
+    let mut result = Vec::<Token>::new();
+    let mut token_array = tokens.into_iter().peekable();
+
+    while let Some(curr_token) = token_array.next() {
+        let mut insert_mul = false;
+
+        if let Some(next_token) = token_array.peek() {
+            let next_token_preintercept_token = convert_to_preintercept_token(next_token);
+            let curr_token_preintercept_token = convert_to_preintercept_token(&curr_token);
+
+            if (curr_token_preintercept_token == PreinterceptToken::Variable
+            || curr_token_preintercept_token == PreinterceptToken::Number
+            || curr_token_preintercept_token == PreinterceptToken::Rparen)
+            && (next_token_preintercept_token == PreinterceptToken::Function
+            || next_token_preintercept_token == PreinterceptToken::Lparen
+            || next_token_preintercept_token == PreinterceptToken::Variable)
+            {
+                insert_mul = true;
+            }
+        }
+
+        result.push(curr_token);
+
+        if insert_mul {
+            result.push(Token::Mul);
+        }
+    }
+
+    Ok(result)
+}
+
+fn convert_to_preintercept_token(token: &Token) -> PreinterceptToken {
+    match token {
+        Token::Variable(_) => PreinterceptToken::Variable,
+        Token::Function(_) => PreinterceptToken::Function,
+        Token::Int(_) => PreinterceptToken::Number,
+        Token::Float(_) => PreinterceptToken::Number,
+        Token::Plus => PreinterceptToken::Irrelevant,
+        Token::Minus => PreinterceptToken::Irrelevant,
+        Token::Mul => PreinterceptToken::Irrelevant,
+        Token::Div => PreinterceptToken::Irrelevant,
+        Token::Pow => PreinterceptToken::Irrelevant,
+        Token::Lparen => PreinterceptToken::Lparen,
+        Token::Rparen => PreinterceptToken::Rparen,
     }
 }
 

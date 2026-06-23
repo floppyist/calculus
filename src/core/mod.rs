@@ -1,8 +1,9 @@
 use core::fmt;
 
+pub mod parser;
 pub mod tokenizer;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Token {
     // Dynamic
     Variable(char),
@@ -41,7 +42,18 @@ impl fmt::Display for Token {
     }
 }
 
-#[derive(Debug)]
+// Used for preintercept in tokenizer
+#[derive(PartialEq)]
+pub enum PreinterceptToken {
+    Variable,
+    Function,
+    Number,
+    Lparen,
+    Rparen,
+    Irrelevant,
+}
+
+#[derive(Debug, Clone)]
 pub enum Function {
     Sin,
     Cos,

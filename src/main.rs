@@ -1,16 +1,10 @@
-use std::io;
-
 mod core;
 
 fn main() {
-    let mut buffer = String::new();
-    let stdin = io::stdin();
+    let test_input = "3sin(x + co*sss(y - tan(z) + 7).00)";
+    let tokens = core::tokenizer::tokenize(test_input);
 
-    let _ = stdin.read_line(&mut buffer);
-
-    let tokens = core::tokenizer::tokenize(&buffer);
-
-    println!("\n\nInput: {}", buffer);
+    println!("\n\nInput: {}", test_input);
     print!("Result: ");
 
     match tokens {
