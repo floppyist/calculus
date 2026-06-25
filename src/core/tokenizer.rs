@@ -172,7 +172,8 @@ pub fn preintercept(tokens: Vec<Token>) -> Result<Vec<Token>, TokenizerError> {
                 || curr_token_preintercept_token == PreinterceptToken::Rparen)
                 && (next_token_preintercept_token == PreinterceptToken::Function
                     || next_token_preintercept_token == PreinterceptToken::Lparen
-                    || next_token_preintercept_token == PreinterceptToken::Variable)
+                    || next_token_preintercept_token == PreinterceptToken::Variable
+                    || next_token_preintercept_token == PreinterceptToken::Number)
             {
                 insert_mul = true;
             }
@@ -291,5 +292,15 @@ mod tests {
         assert_eq!(tokens.len(), 11);
         assert_eq!(format!("{:?}", tokens[0]), "Variable('a')");
         assert_eq!(format!("{:?}", tokens[10]), "Int(5)");
+    }
+
+    #[test]
+    fn test_number_after_bracket_without_any_operator() {
+        let tokens = check("(1+2)3");
+
+        assert_eq!(tokens.len(), 7);
+        assert_eq!(format!("{:?}", tokens[0]), "Lparen");
+        assert_eq!(format!("{:?}", tokens[5]), "Mul");
+        assert_eq!(format!("{:?}", tokens[6]), "Int(3)");
     }
 }
