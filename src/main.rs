@@ -1,9 +1,7 @@
 mod core;
 
 fn main() {
-    // let test_input = "3*sin(x + y*cos(z - tan(a + b*cos(c - sin(d*e + f*g/2))) * 7) / (2*x + 4*y)) - (5*cos(x*y) + tan(z - 1) / (x + y + z)) * 2*sin(cos(tan(x))) + 8/(2/(2/(2/(x + 1))))";
-    //let test_input = "3sin(x + co*sss(y - tan(z) + 7)/10)";
-    let test_input = "3+4^7+x-3";
+    let test_input = "(3.14 * sin(x * 2) + 42) / (5 ^ 2 ^ 3 - tan(y / 0.5)) * (x + y) ^ (2 * 3) - 0.001 * cos(100 - x)";
     let tokens = core::tokenizer::tokenize(test_input);
 
     println!("\n\nInput: {}", test_input);
@@ -16,12 +14,19 @@ fn main() {
             let ast = core::parser::generate_ast(token);
 
             println!("{:?}", ast);
-        },
+
+            let variables = vec![('x', 3.1), ('y', 2.0)];
+
+            let sum = ast.evaluate(&variables);
+
+            println!("Variables: {:?}", variables);
+
+            println!("Sum: {}", sum);
+        }
         Err(err) => {
             print!("{}", err)
         }
     }
-
 
     println!();
 }

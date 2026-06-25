@@ -167,11 +167,11 @@ pub fn preintercept(tokens: Vec<Token>) -> Result<Vec<Token>, TokenizerError> {
             let curr_token_preintercept_token = convert_to_preintercept_token(&curr_token);
 
             if (curr_token_preintercept_token == PreinterceptToken::Variable
-            || curr_token_preintercept_token == PreinterceptToken::Number
-            || curr_token_preintercept_token == PreinterceptToken::Rparen)
-            && (next_token_preintercept_token == PreinterceptToken::Function
-            || next_token_preintercept_token == PreinterceptToken::Lparen
-            || next_token_preintercept_token == PreinterceptToken::Variable)
+                || curr_token_preintercept_token == PreinterceptToken::Number
+                || curr_token_preintercept_token == PreinterceptToken::Rparen)
+                && (next_token_preintercept_token == PreinterceptToken::Function
+                    || next_token_preintercept_token == PreinterceptToken::Lparen
+                    || next_token_preintercept_token == PreinterceptToken::Variable)
             {
                 insert_mul = true;
             }

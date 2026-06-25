@@ -3,7 +3,7 @@ use std::slice::Iter;
 
 use crate::core::Function;
 use crate::core::Token;
-use crate::core::Node;
+use crate::core::node::Node;
 
 pub fn generate_ast(tokens: Vec<Token>) -> Node {
     let mut iter_tokens = tokens.iter().peekable();
@@ -32,7 +32,7 @@ fn parse_expression(iter: &mut Peekable<Iter<Token>>) -> Node {
                 left = Node::Sub(Box::new(left), Box::new(right));
             }
 
-            _ => break
+            _ => break,
         }
     }
 
@@ -60,7 +60,7 @@ fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Node {
                 left = Node::Div(Box::new(left), Box::new(right));
             }
 
-            _ => break
+            _ => break,
         }
     }
 
@@ -75,12 +75,13 @@ fn parse_power(iter: &mut Peekable<Iter<Token>>) -> Node {
             Token::Pow => {
                 iter.next();
 
-                let right = parse_factor(iter);
+                // Pow is right assoziative so we have to trigger that here
+                let right = parse_power(iter);
 
                 left = Node::Pow(Box::new(left), Box::new(right));
-            },
+            }
 
-            _ => break
+            _ => break,
         }
     }
 
@@ -95,32 +96,30 @@ fn parse_factor(iter: &mut Peekable<Iter<Token>>) -> Node {
         Some(Token::Function(func)) => {
             match iter.next() {
                 Some(Token::Lparen) => {}
-                _ => panic!("Syntax error: Expected '(' after function name!")
+                _ => panic!("Syntax error: Expected '(' after function name!"),
             }
 
             let inner_expression = parse_expression(iter);
 
             match iter.next() {
                 Some(Token::Rparen) => {}
-                _ => panic!("Syntax error: Expected ')' after function name!")
+                _ => panic!("Syntax error: Expected ')' after function name!"),
             }
 
             match func {
                 Function::Sin => Node::Sin(Box::new(inner_expression)),
                 Function::Cos => Node::Cos(Box::new(inner_expression)),
-                Function::Tan => Node::Tan(Box::new(inner_expression))
+                Function::Tan => Node::Tan(Box::new(inner_expression)),
             }
-        },
+        }
         Some(Token::Lparen) => {
             let inner_expression = parse_expression(iter);
 
             match iter.next() {
-                Some(Token::Rparen) => {
-                    inner_expression
-                }
-                _ => panic!("Syntax error: no closing bracket ')'!")
+                Some(Token::Rparen) => inner_expression,
+                _ => panic!("Syntax error: no closing bracket ')'!"),
             }
-        },
-        _ => panic!("Syntax error")
+        }
+        _ => panic!("Syntax error"),
     }
 }

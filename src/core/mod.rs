@@ -1,5 +1,6 @@
 use core::fmt;
 
+pub mod node;
 pub mod parser;
 pub mod tokenizer;
 
@@ -58,23 +59,4 @@ pub enum Function {
     Sin,
     Cos,
     Tan,
-}
-
-#[derive(Debug)]
-pub enum Node {
-    IntNumber(i64),
-    FloatNumber(f64),
-
-    Variable(char),
-
-    Add(Box<Node>, Box<Node>),
-    Sub(Box<Node>, Box<Node>),
-    Mul(Box<Node>, Box<Node>),
-    Div(Box<Node>, Box<Node>),
-
-    Pow(Box<Node>, Box<Node>),
-
-    Sin(Box<Node>),
-    Cos(Box<Node>),
-    Tan(Box<Node>)
 }
