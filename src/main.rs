@@ -1,32 +1,47 @@
+use std::io::{self};
+use std::io::Write;
+use std::io::stdin;
+
 mod core;
 
-fn main() {
-    let test_input = "(3.14 * sin(x * 2) + 42) / (5 ^ 2 ^ 3 - tan(y / 0.5)) * (x + y) ^ (2 * 3) - 0.001 * cos(100 - x)*sqrt(z)";
-    let tokens = core::tokenizer::tokenize(test_input);
+fn main() -> io::Result<()> {
+    let mut buffer = String::new();
+    let stdin = stdin();
 
-    println!("\n\nInput: {}", test_input);
-    print!("Result: ");
+    println!("Calculus");
 
-    match tokens {
-        Ok(token) => {
-            println!("{:?}", token);
+    loop {
+        print!("> ");
+        io::stdout().flush().unwrap();
 
-            let ast = core::parser::generate_ast(token);
+        stdin.read_line(&mut buffer)?;
 
-            println!("{:?}", ast);
+        print!("\n[INPUT]:\t{}", buffer);
 
-            let variables = vec![('x', 3.1), ('y', 2.0), ('z', 4.2)];
+        let tokens = core::tokenizer::tokenize(&buffer);
+        let variables = vec![('x', 3.1), ('y', 2.0), ('z', 4.2)];
 
-            let sum = ast.evaluate(&variables);
+        match tokens {
+            Ok(token) => {
+                println!("[TOKENS]:\t{:?}", token);
 
-            println!("Variables: {:?}", variables);
+                let ast = core::parser::generate_ast(token);
 
-            println!("Sum: {}", sum);
+                println!("[AST]:\t\t{:?}", ast);
+
+                let sum = ast.evaluate(&variables);
+
+                println!("[VARIABLES]:\t{:?}", variables);
+                println!("[SUM]:\t\t{}", sum);
+            }
+
+            Err(err) => {
+                print!("{}", err)
+            }
         }
-        Err(err) => {
-            print!("{}", err)
-        }
+
+        buffer.clear();
+
+        println!();
     }
-
-    println!();
 }
