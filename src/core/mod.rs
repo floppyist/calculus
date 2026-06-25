@@ -72,6 +72,8 @@ pub enum Node {
     Mul(Box<Node>, Box<Node>),
     Div(Box<Node>, Box<Node>),
 
+    Pow(Box<Node>, Box<Node>),
+
     Sin(Box<Node>),
     Cos(Box<Node>),
     Tan(Box<Node>)

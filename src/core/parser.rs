@@ -40,14 +40,14 @@ fn parse_expression(iter: &mut Peekable<Iter<Token>>) -> Node {
 }
 
 fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Node {
-    let mut left = parse_factor(iter);
+    let mut left = parse_power(iter);
 
     while let Some(token) = iter.peek() {
         match token {
             Token::Mul => {
                 iter.next();
 
-                let right = parse_factor(iter);
+                let right = parse_power(iter);
 
                 left = Node::Mul(Box::new(left), Box::new(right));
             }
@@ -55,10 +55,30 @@ fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Node {
             Token::Div => {
                 iter.next();
 
-                let right = parse_factor(iter);
+                let right = parse_power(iter);
 
                 left = Node::Div(Box::new(left), Box::new(right));
             }
+
+            _ => break
+        }
+    }
+
+    left
+}
+
+fn parse_power(iter: &mut Peekable<Iter<Token>>) -> Node {
+    let mut left = parse_factor(iter);
+
+    while let Some(token) = iter.peek() {
+        match token {
+            Token::Pow => {
+                iter.next();
+
+                let right = parse_factor(iter);
+
+                left = Node::Pow(Box::new(left), Box::new(right));
+            },
 
             _ => break
         }
