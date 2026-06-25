@@ -12,6 +12,7 @@ pub enum Node {
 
     Pow(Box<Node>, Box<Node>),
 
+    Sqrt(Box<Node>),
     Sin(Box<Node>),
     Cos(Box<Node>),
     Tan(Box<Node>),
@@ -36,6 +37,7 @@ impl Node {
             Node::Div(left, right) => left.evaluate(variables) / right.evaluate(variables),
             Node::Pow(left, right) => left.evaluate(variables).powf(right.evaluate(variables)),
 
+            Node::Sqrt(left) => left.evaluate(variables).sqrt(),
             Node::Sin(left) => left.evaluate(variables).sin(),
             Node::Cos(left) => left.evaluate(variables).cos(),
             Node::Tan(left) => left.evaluate(variables).tan(),

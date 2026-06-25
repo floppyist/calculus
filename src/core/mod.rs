@@ -56,6 +56,7 @@ pub enum PreinterceptToken {
 
 #[derive(Debug, Clone)]
 pub enum Function {
+    Sqrt,
     Sin,
     Cos,
     Tan,

@@ -107,6 +107,7 @@ fn parse_factor(iter: &mut Peekable<Iter<Token>>) -> Node {
             }
 
             match func {
+                Function::Sqrt => Node::Sqrt(Box::new(inner_expression)),
                 Function::Sin => Node::Sin(Box::new(inner_expression)),
                 Function::Cos => Node::Cos(Box::new(inner_expression)),
                 Function::Tan => Node::Tan(Box::new(inner_expression)),

@@ -138,6 +138,7 @@ fn get_state(c: &char) -> TokenizerState {
 
 fn get_function(input: &str) -> Option<Function> {
     match input.to_ascii_uppercase().as_str() {
+        "SQRT" => Some(Function::Sqrt),
         "SIN" => Some(Function::Sin),
         "COS" => Some(Function::Cos),
         "TAN" => Some(Function::Tan),
