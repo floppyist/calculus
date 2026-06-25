@@ -1,6 +1,6 @@
-use std::io::{self};
 use std::io::Write;
 use std::io::stdin;
+use std::io::{self};
 
 mod core;
 

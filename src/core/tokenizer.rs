@@ -288,8 +288,8 @@ mod tests {
     fn test_edge_case_unknown_function_or_variables() {
         let tokens = check("abc(x) + 5");
 
-        assert_eq!(tokens.len(), 8);
+        assert_eq!(tokens.len(), 11);
         assert_eq!(format!("{:?}", tokens[0]), "Variable('a')");
-        assert_eq!(format!("{:?}", tokens[7]), "Int(5)");
+        assert_eq!(format!("{:?}", tokens[10]), "Int(5)");
     }
 }
