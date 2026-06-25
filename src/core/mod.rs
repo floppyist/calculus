@@ -59,3 +59,20 @@ pub enum Function {
     Cos,
     Tan,
 }
+
+#[derive(Debug)]
+pub enum Node {
+    IntNumber(i64),
+    FloatNumber(f64),
+
+    Variable(char),
+
+    Add(Box<Node>, Box<Node>),
+    Sub(Box<Node>, Box<Node>),
+    Mul(Box<Node>, Box<Node>),
+    Div(Box<Node>, Box<Node>),
+
+    Sin(Box<Node>),
+    Cos(Box<Node>),
+    Tan(Box<Node>)
+}
