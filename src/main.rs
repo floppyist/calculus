@@ -16,7 +16,9 @@ fn main() -> io::Result<()> {
 
         stdin.read_line(&mut buffer)?;
 
-        print!("\n[INPUT]:\t{}", buffer);
+        if buffer.is_empty() {
+            println!("[INPUT]:\t{}", &buffer);
+        }
 
         let tokens = core::tokenizer::tokenize(&buffer);
         let variables = vec![('x', 3.1), ('y', 2.0), ('z', 4.2)];
@@ -36,12 +38,10 @@ fn main() -> io::Result<()> {
             }
 
             Err(err) => {
-                print!("{}", err)
+                println!("{}", err)
             }
         }
 
         buffer.clear();
-
-        println!();
     }
 }

@@ -13,6 +13,7 @@ pub enum TokenizerState {
 
 #[derive(Debug)]
 pub enum TokenizerError {
+    NoInput,
     NaN,
     UndefinedSymbol(char),
     BracketNotClosed,
@@ -22,11 +23,12 @@ pub enum TokenizerError {
 impl fmt::Display for TokenizerError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let name = match self {
-            TokenizerError::NaN => "ERROR: NaN (Not a Number)".to_string(),
-            TokenizerError::UndefinedSymbol(c) => format!("ERROR: Undefined symbol '{}'", c),
-            TokenizerError::BracketNotClosed => "ERROR: Bracket remains unclosed".to_string(),
+            TokenizerError::NoInput => "[ERROR]: No input given".to_string(),
+            TokenizerError::NaN => "[ERROR]: NaN (Not a Number)".to_string(),
+            TokenizerError::UndefinedSymbol(c) => format!("[ERROR]: Undefined symbol '{}'", c),
+            TokenizerError::BracketNotClosed => "[ERROR]: Bracket remains unclosed".to_string(),
             TokenizerError::InvalidBrackets => {
-                "ERROR: Brackets are set wrong. Maybe there is somewhere ')('?".to_string()
+                "[ERROR]: Brackets are set wrong. Maybe there is somewhere ')('?".to_string()
             }
         };
 
@@ -36,6 +38,10 @@ impl fmt::Display for TokenizerError {
 
 pub fn tokenize(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
     let input = preprocess(raw_input);
+
+    if input.is_empty() {
+        return Err(TokenizerError::NoInput);
+    }
 
     let mut chars = input.chars().peekable();
     let mut result = Vec::<Token>::new();
