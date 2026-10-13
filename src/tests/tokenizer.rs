@@ -1,0 +1,131 @@
+use crate::core::Token;
+use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side};
+
+fn check(input: &str) -> Vec<Token> {
+    tokenize(input, &[]).expect("Tokenisierungs-Fehler bei validem Input")
+}
+
+#[test]
+fn test_basic_math() {
+    let tokens = check("3 + 4 * x");
+
+    assert_eq!(tokens.len(), 5);
+    assert_eq!(format!("{:?}", tokens[0]), "Int(3)");
+    assert_eq!(format!("{:?}", tokens[2]), "Int(4)");
+    assert_eq!(format!("{:?}", tokens[4]), "Variable('x')");
+}
+
+#[test]
+fn test_floats_and_zeros() {
+    let tokens = check("0.00 + .5");
+
+    assert_eq!(format!("{:?}", tokens[0]), "Float(0.0)");
+    assert_eq!(format!("{:?}", tokens[2]), "Float(0.5)");
+}
+
+#[test]
+fn test_functions() {
+    let tokens = check("sin(x) + COS(y)");
+
+    assert_eq!(format!("{:?}", tokens[0]), "Function(Sin)");
+    assert_eq!(format!("{:?}", tokens[5]), "Function(Cos)");
+}
+
+#[test]
+fn test_whitespace_handling() {
+    let tokens_compact = check("3+sin(x)");
+    let tokens_spaced = check("3  +  sin  (  x  )");
+
+    assert_eq!(
+        format!("{:?}", tokens_compact),
+        format!("{:?}", tokens_spaced)
+    );
+}
+
+#[test]
+fn test_assignment_tokens() {
+    let tokens = check("x=2");
+
+    assert_eq!(format!("{:?}", tokens[0]), "Variable('x')");
+    assert_eq!(format!("{:?}", tokens[1]), "Assign");
+    assert_eq!(format!("{:?}", tokens[2]), "Int(2)");
+}
+
+#[test]
+fn test_user_function_call_with_arguments() {
+    let tokens = check("f(1,2)");
+
+    // Without a known function, 'f' is split into individual variables
+    assert!(tokens.iter().any(|t| matches!(t, Token::Variable('f'))));
+
+    let known = tokenize("f(1,2)", &["f".to_string()]).unwrap();
+
+    assert_eq!(format!("{:?}", known[0]), "UserFunction(\"f\")");
+    assert_eq!(format!("{:?}", known[2]), "Int(1)");
+    assert_eq!(format!("{:?}", known[3]), "Comma");
+    assert_eq!(format!("{:?}", known[4]), "Int(2)");
+}
+
+#[test]
+fn test_definition_side_recognizes_function_signature() {
+    let tokens = tokenize_definition_side("f(x,y)").unwrap();
+
+    assert_eq!(format!("{:?}", tokens[0]), "UserFunction(\"f\")");
+    assert_eq!(format!("{:?}", tokens[2]), "Variable('x')");
+    assert_eq!(format!("{:?}", tokens[3]), "Comma");
+    assert_eq!(format!("{:?}", tokens[4]), "Variable('y')");
+}
+
+#[test]
+fn test_error_unclosed_bracket() {
+    let result = tokenize("3 * (x + 5", &[]);
+
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        TokenizerError::BracketNotClosed
+    ));
+}
+
+#[test]
+fn test_error_invalid_brackets_order() {
+    let result = tokenize("3 + )x + 5(", &[]);
+
+    assert!(result.is_err());
+    assert!(matches!(
+        result.unwrap_err(),
+        TokenizerError::InvalidBrackets
+    ));
+}
+
+#[test]
+fn test_error_undefined_symbol() {
+    let result = tokenize("3 @ x", &[]);
+
+    assert!(result.is_err());
+
+    if let Err(TokenizerError::UndefinedSymbol(c)) = result {
+        assert_eq!(c, '@');
+    } else {
+        panic!("Erwartete UndefinedSymbol Fehler");
+    }
+}
+
+#[test]
+fn test_edge_case_unknown_function_or_variables() {
+    let tokens = check("abc(x) + 5");
+
+    assert_eq!(tokens.len(), 11);
+    assert_eq!(format!("{:?}", tokens[0]), "Variable('a')");
+    assert_eq!(format!("{:?}", tokens[10]), "Int(5)");
+}
+
+#[test]
+fn test_number_after_bracket_without_any_operator() {
+    let tokens = check("(1+2)3");
+
+    assert_eq!(tokens.len(), 7);
+    assert_eq!(format!("{:?}", tokens[0]), "Lparen");
+    assert_eq!(format!("{:?}", tokens[5]), "Mul");
+    assert_eq!(format!("{:?}", tokens[6]), "Int(3)");
+}

@@ -36,7 +36,20 @@ impl fmt::Display for TokenizerError {
     }
 }
 
-pub fn tokenize(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
+pub fn tokenize(raw_input: &str, known_functions: &[String]) -> Result<Vec<Token>, TokenizerError> {
+    tokenize_internal(raw_input, known_functions, false)
+}
+
+// For an assignment target: unknown names before '(' count as functions
+pub fn tokenize_definition_side(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
+    tokenize_internal(raw_input, &[], true)
+}
+
+fn tokenize_internal(
+    raw_input: &str,
+    known_functions: &[String],
+    definition_mode: bool,
+) -> Result<Vec<Token>, TokenizerError> {
     let input = preprocess(raw_input);
 
     if input.is_empty() {
@@ -61,14 +74,20 @@ pub fn tokenize(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
                     }
                 }
 
-                let may_function = if chars.peek() == Some(&'(') {
+                let followed_by_lparen = chars.peek() == Some(&'(');
+                let may_function = if followed_by_lparen {
                     get_function(&state_string)
                 } else {
                     None
                 };
 
+                let may_user_function = followed_by_lparen
+                    && (definition_mode || known_functions.iter().any(|n| n == &state_string));
+
                 if let Some(f) = may_function {
                     result.push(Token::Function(f));
+                } else if may_user_function {
+                    result.push(Token::UserFunction(state_string.clone()));
                 } else {
                     for var in state_string.chars() {
                         result.push(Token::Variable(var));
@@ -107,6 +126,8 @@ pub fn tokenize(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
                     '*' => result.push(Token::Mul),
                     '/' => result.push(Token::Div),
                     '^' => result.push(Token::Pow),
+                    '=' => result.push(Token::Assign),
+                    ',' => result.push(Token::Comma),
                     _ => {
                         return Err(TokenizerError::UndefinedSymbol(c));
                     }
@@ -199,6 +220,7 @@ fn convert_to_preintercept_token(token: &Token) -> PreinterceptToken {
     match token {
         Token::Variable(_) => PreinterceptToken::Variable,
         Token::Function(_) => PreinterceptToken::Function,
+        Token::UserFunction(_) => PreinterceptToken::Function,
         Token::Int(_) => PreinterceptToken::Number,
         Token::Float(_) => PreinterceptToken::Number,
         Token::Plus => PreinterceptToken::Irrelevant,
@@ -206,107 +228,9 @@ fn convert_to_preintercept_token(token: &Token) -> PreinterceptToken {
         Token::Mul => PreinterceptToken::Irrelevant,
         Token::Div => PreinterceptToken::Irrelevant,
         Token::Pow => PreinterceptToken::Irrelevant,
+        Token::Assign => PreinterceptToken::Irrelevant,
+        Token::Comma => PreinterceptToken::Irrelevant,
         Token::Lparen => PreinterceptToken::Lparen,
         Token::Rparen => PreinterceptToken::Rparen,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn check(input: &str) -> Vec<Token> {
-        tokenize(input).expect("Tokenisierungs-Fehler bei validem Input")
-    }
-
-    #[test]
-    fn test_basic_math() {
-        let tokens = check("3 + 4 * x");
-
-        assert_eq!(tokens.len(), 5);
-        assert_eq!(format!("{:?}", tokens[0]), "Int(3)");
-        assert_eq!(format!("{:?}", tokens[2]), "Int(4)");
-        assert_eq!(format!("{:?}", tokens[4]), "Variable('x')");
-    }
-
-    #[test]
-    fn test_floats_and_zeros() {
-        let tokens = check("0.00 + .5");
-
-        assert_eq!(format!("{:?}", tokens[0]), "Float(0.0)");
-        assert_eq!(format!("{:?}", tokens[2]), "Float(0.5)");
-    }
-
-    #[test]
-    fn test_functions() {
-        let tokens = check("sin(x) + COS(y)");
-
-        assert_eq!(format!("{:?}", tokens[0]), "Function(Sin)");
-        assert_eq!(format!("{:?}", tokens[5]), "Function(Cos)");
-    }
-
-    #[test]
-    fn test_whitespace_handling() {
-        let tokens_compact = check("3+sin(x)");
-        let tokens_spaced = check("3  +  sin  (  x  )");
-
-        assert_eq!(
-            format!("{:?}", tokens_compact),
-            format!("{:?}", tokens_spaced)
-        );
-    }
-
-    #[test]
-    fn test_error_unclosed_bracket() {
-        let result = tokenize("3 * (x + 5");
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            TokenizerError::BracketNotClosed
-        ));
-    }
-
-    #[test]
-    fn test_error_invalid_brackets_order() {
-        let result = tokenize("3 + )x + 5(");
-
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            TokenizerError::InvalidBrackets
-        ));
-    }
-
-    #[test]
-    fn test_error_undefined_symbol() {
-        let result = tokenize("3 @ x");
-
-        assert!(result.is_err());
-
-        if let Err(TokenizerError::UndefinedSymbol(c)) = result {
-            assert_eq!(c, '@');
-        } else {
-            panic!("Erwartete UndefinedSymbol Fehler");
-        }
-    }
-
-    #[test]
-    fn test_edge_case_unknown_function_or_variables() {
-        let tokens = check("abc(x) + 5");
-
-        assert_eq!(tokens.len(), 11);
-        assert_eq!(format!("{:?}", tokens[0]), "Variable('a')");
-        assert_eq!(format!("{:?}", tokens[10]), "Int(5)");
-    }
-
-    #[test]
-    fn test_number_after_bracket_without_any_operator() {
-        let tokens = check("(1+2)3");
-
-        assert_eq!(tokens.len(), 7);
-        assert_eq!(format!("{:?}", tokens[0]), "Lparen");
-        assert_eq!(format!("{:?}", tokens[5]), "Mul");
-        assert_eq!(format!("{:?}", tokens[6]), "Int(3)");
     }
 }

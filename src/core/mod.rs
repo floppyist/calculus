@@ -1,7 +1,9 @@
 use core::fmt;
 
+pub mod environment;
 pub mod node;
 pub mod parser;
+pub mod plot;
 pub mod tokenizer;
 
 #[derive(Debug, Clone)]
@@ -9,6 +11,7 @@ pub enum Token {
     // Dynamic
     Variable(char),
     Function(Function),
+    UserFunction(String),
     // Numbers
     Int(i64),
     Float(f64),
@@ -18,6 +21,9 @@ pub enum Token {
     Mul,
     Div,
     Pow,
+    // Assignment and argument separator
+    Assign,
+    Comma,
     // Symbols
     Lparen,
     Rparen,
@@ -30,11 +36,14 @@ impl fmt::Display for Token {
             Token::Float(num) => format!("FLOAT({})", num),
             Token::Variable(chr) => format!("VARIABLE({})", chr),
             Token::Function(fct) => format!("FUNCTION({:?})", fct),
+            Token::UserFunction(name) => format!("FUNCTION({})", name),
             Token::Plus => "PLUS".to_string(),
             Token::Minus => "MINUS".to_string(),
             Token::Mul => "MUL".to_string(),
             Token::Div => "DIV".to_string(),
             Token::Pow => "POW".to_string(),
+            Token::Assign => "ASSIGN".to_string(),
+            Token::Comma => "COMMA".to_string(),
             Token::Lparen => "LPAREN".to_string(),
             Token::Rparen => "RPAREN".to_string(),
         };

@@ -1,4 +1,9 @@
-#[derive(Debug)]
+use std::collections::HashMap;
+
+// Maximum call depth so recursive user functions cannot blow the stack
+const MAX_CALL_DEPTH: usize = 256;
+
+#[derive(Debug, Clone)]
 pub enum Node {
     IntNumber(i64),
     FloatNumber(f64),
@@ -16,31 +21,65 @@ pub enum Node {
     Sin(Box<Node>),
     Cos(Box<Node>),
     Tan(Box<Node>),
+
+    // User function call: name + arguments
+    Call(String, Vec<Node>),
+}
+
+// Evaluation context: current variable values and known functions
+pub struct EvalContext<'a> {
+    pub variables: &'a HashMap<char, f64>,
+    pub functions: &'a HashMap<String, (Vec<char>, Node)>,
+    pub depth: usize,
 }
 
 impl Node {
-    pub fn evaluate(&self, variables: &Vec<(char, f64)>) -> f64 {
+    pub fn evaluate(&self, ctx: &EvalContext) -> f64 {
         match self {
             Node::IntNumber(n) => *n as f64,
 
             Node::FloatNumber(n) => *n,
 
-            Node::Variable(c) => variables
-                .iter()
-                .find(|(n, _)| n == c)
-                .map(|(_, v)| *v)
-                .unwrap_or(0.0),
+            Node::Variable(c) => ctx.variables.get(c).copied().unwrap_or(0.0),
 
-            Node::Add(left, right) => left.evaluate(variables) + right.evaluate(variables),
-            Node::Sub(left, right) => left.evaluate(variables) - right.evaluate(variables),
-            Node::Mul(left, right) => left.evaluate(variables) * right.evaluate(variables),
-            Node::Div(left, right) => left.evaluate(variables) / right.evaluate(variables),
-            Node::Pow(left, right) => left.evaluate(variables).powf(right.evaluate(variables)),
+            Node::Add(left, right) => left.evaluate(ctx) + right.evaluate(ctx),
+            Node::Sub(left, right) => left.evaluate(ctx) - right.evaluate(ctx),
+            Node::Mul(left, right) => left.evaluate(ctx) * right.evaluate(ctx),
+            Node::Div(left, right) => left.evaluate(ctx) / right.evaluate(ctx),
+            Node::Pow(left, right) => left.evaluate(ctx).powf(right.evaluate(ctx)),
 
-            Node::Sqrt(left) => left.evaluate(variables).sqrt(),
-            Node::Sin(left) => left.evaluate(variables).sin(),
-            Node::Cos(left) => left.evaluate(variables).cos(),
-            Node::Tan(left) => left.evaluate(variables).tan(),
+            Node::Sqrt(left) => left.evaluate(ctx).sqrt(),
+            Node::Sin(left) => left.evaluate(ctx).sin(),
+            Node::Cos(left) => left.evaluate(ctx).cos(),
+            Node::Tan(left) => left.evaluate(ctx).tan(),
+
+            Node::Call(name, arguments) => {
+                if ctx.depth >= MAX_CALL_DEPTH {
+                    return f64::NAN;
+                }
+
+                let Some((parameters, body)) = ctx.functions.get(name) else {
+                    return f64::NAN;
+                };
+
+                // Arguments are evaluated in the caller's context
+                let evaluated: Vec<f64> = arguments.iter().map(|arg| arg.evaluate(ctx)).collect();
+
+                // Parameters shadow global variables
+                let mut local = ctx.variables.clone();
+
+                for (parameter, value) in parameters.iter().zip(evaluated.iter()) {
+                    local.insert(*parameter, *value);
+                }
+
+                let child = EvalContext {
+                    variables: &local,
+                    functions: ctx.functions,
+                    depth: ctx.depth + 1,
+                };
+
+                body.evaluate(&child)
+            }
         }
     }
 }
