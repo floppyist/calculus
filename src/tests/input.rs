@@ -51,6 +51,18 @@ fn test_editor_history() {
 }
 
 #[test]
+fn test_editor_set_and_read_history() {
+    let mut editor = LineEditor::new();
+
+    editor.set_history(vec!["a".to_string(), "b".to_string()]);
+
+    assert_eq!(editor.history().to_vec(), vec!["a".to_string(), "b".to_string()]);
+
+    editor.history_prev();
+    assert_eq!(editor.text(), "b");
+}
+
+#[test]
 fn test_key_reader_arrow_keys() {
     let mut reader = KeyReader::new();
 

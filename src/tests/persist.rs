@@ -11,6 +11,7 @@ fn test_state_round_trip() {
         scales: true,
         definitions: vec!["f(x) = 3*x^3".to_string(), "x = 3".to_string()],
         plots: vec!["f(x)".to_string(), "sin(x)".to_string()],
+        history: vec!["x = 3".to_string(), "plot sin(x)".to_string()],
     };
 
     persist::save(&path, &state).unwrap();
@@ -20,6 +21,7 @@ fn test_state_round_trip() {
     assert!(loaded.scales);
     assert_eq!(loaded.definitions, state.definitions);
     assert_eq!(loaded.plots, state.plots);
+    assert_eq!(loaded.history, state.history);
 
     let _ = std::fs::remove_file(&path);
 }

@@ -105,6 +105,7 @@ impl App {
     // Applies a loaded session state
     pub fn restore(&mut self, state: &State) {
         self.scales_visible = state.scales;
+        self.editor.set_history(state.history.clone());
 
         for definition in &state.definitions {
             let _ = self.environment.execute(definition);
@@ -128,6 +129,7 @@ impl App {
             scales: self.scales_visible,
             definitions,
             plots: self.curves.iter().map(|curve| curve.source.clone()).collect(),
+            history: self.editor.history().to_vec(),
         };
 
         let _ = persist::save(path, &state);
@@ -255,16 +257,6 @@ impl App {
 
     fn draw_input(&self, canvas: &mut Canvas, layout: &Layout) {
         let rect = layout.input;
-        let mode = match self.input_mode {
-            InputMode::Insert => "INSERT",
-            InputMode::Normal => "NORMAL",
-        };
-        let label = format!("Input  [{}]", mode);
-        let title = if self.status.is_empty() {
-            label
-        } else {
-            format!("{}  |  {}", label, self.status)
-        };
 
         canvas.draw_box(
             rect.x as isize,
@@ -272,8 +264,44 @@ impl App {
             rect.width,
             rect.height,
             border_style(),
-            Some(&title),
+            None,
         );
+
+        // Title " Input  [MODE] ..." with the mode word colour coded
+        let (mode, mode_color) = match self.input_mode {
+            InputMode::Insert => ("INSERT", Color::BrightRed),
+            InputMode::Normal => ("NORMAL", Color::BrightBlue),
+        };
+
+        let border = border_style().bold();
+        let title_y = rect.y as isize;
+        let mut title_x = rect.x as isize + 2;
+        let mut remaining = rect.width.saturating_sub(4);
+
+        let used = draw_title_segment(canvas, title_x, title_y, remaining, " Input  [", border);
+
+        title_x += used as isize;
+        remaining = remaining.saturating_sub(used);
+
+        let used = draw_title_segment(
+            canvas,
+            title_x,
+            title_y,
+            remaining,
+            mode,
+            Style::fg(mode_color).bold(),
+        );
+
+        title_x += used as isize;
+        remaining = remaining.saturating_sub(used);
+
+        let suffix = if self.status.is_empty() {
+            "]".to_string()
+        } else {
+            format!("]  |  {}", self.status)
+        };
+
+        draw_title_segment(canvas, title_x, title_y, remaining, &suffix, border);
 
         if rect.height < 3 || rect.width < 4 {
             return;
@@ -1484,6 +1512,34 @@ fn wrap_with_stamp(stamp: Option<&str>, text: &str, width: usize) -> Vec<(Option
 
 fn border_style() -> Style {
     Style::fg(Color::BrightBlack)
+}
+
+// Draws one part of a box title clipped with an ellipsis; returns columns used
+fn draw_title_segment(
+    canvas: &mut Canvas,
+    x: isize,
+    y: isize,
+    max_width: usize,
+    text: &str,
+    style: Style,
+) -> usize {
+    if max_width == 0 {
+        return 0;
+    }
+
+    let chars: Vec<char> = text.chars().collect();
+
+    if chars.len() <= max_width {
+        canvas.print(x, y, text, style);
+        return chars.len();
+    }
+
+    let mut clipped: String = chars[..max_width - 1].iter().collect();
+
+    clipped.push('…');
+    canvas.print(x, y, &clipped, style);
+
+    max_width
 }
 
 fn hint_style() -> Style {

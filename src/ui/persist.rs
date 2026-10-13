@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::Path;
 
-// Persisted session state: definitions plus plotted curves and scale visibility
+// Persisted session state: definitions, plotted curves, scale visibility and input history
 pub struct State {
     pub scales: bool,
     pub definitions: Vec<String>,
     pub plots: Vec<String>,
+    pub history: Vec<String>,
 }
 
 // Default state file: $CALCULUS_STATE, otherwise ./.calculus_state
@@ -33,6 +34,12 @@ pub fn save(path: &Path, state: &State) -> std::io::Result<()> {
         contents.push('\n');
     }
 
+    for entry in &state.history {
+        contents.push_str("history ");
+        contents.push_str(entry);
+        contents.push('\n');
+    }
+
     fs::write(path, contents)
 }
 
@@ -43,6 +50,7 @@ pub fn load(path: &Path) -> Option<State> {
         scales: false,
         definitions: Vec::new(),
         plots: Vec::new(),
+        history: Vec::new(),
     };
 
     for line in contents.lines() {
@@ -54,6 +62,11 @@ pub fn load(path: &Path) -> Option<State> {
 
         if let Some(value) = line.strip_prefix("scales=") {
             state.scales = value.trim() == "1";
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("history ") {
+            state.history.push(rest.to_string());
             continue;
         }
 

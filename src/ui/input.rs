@@ -182,6 +182,15 @@ impl LineEditor {
 
         self.history.push(entry);
     }
+
+    pub fn history(&self) -> &[String] {
+        &self.history
+    }
+
+    pub fn set_history(&mut self, entries: Vec<String>) {
+        self.history = entries;
+        self.history_pos = None;
+    }
 }
 
 pub struct KeyReader {
