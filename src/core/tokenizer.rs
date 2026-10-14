@@ -66,8 +66,9 @@ fn tokenize_internal(
 
         match get_state(&c) {
             TokenizerState::Character => {
+                // An identifier is letters plus digits, so names like log2 or atan2 work
                 while let Some(next_char) = chars.peek() {
-                    if get_state(next_char) == TokenizerState::Character {
+                    if next_char.is_ascii_alphabetic() || next_char.is_ascii_digit() {
                         state_string.push(chars.next().unwrap());
                     } else {
                         break;
@@ -86,12 +87,13 @@ fn tokenize_internal(
 
                 if let Some(f) = may_function {
                     result.push(Token::Function(f));
+                } else if let Some(value) = get_constant(&state_string) {
+                    result.push(Token::Float(value));
                 } else if may_user_function {
                     result.push(Token::UserFunction(state_string.clone()));
                 } else {
-                    for var in state_string.chars() {
-                        result.push(Token::Variable(var));
-                    }
+                    // Unknown name: split back so "x2" becomes x*2
+                    push_split(&mut result, &state_string);
                 }
 
                 state_string.clear();
@@ -128,6 +130,7 @@ fn tokenize_internal(
                     '^' => result.push(Token::Pow),
                     '=' => result.push(Token::Assign),
                     ',' => result.push(Token::Comma),
+                    'π' => result.push(Token::Float(std::f64::consts::PI)),
                     _ => {
                         return Err(TokenizerError::UndefinedSymbol(c));
                     }
@@ -166,9 +169,69 @@ fn get_state(c: &char) -> TokenizerState {
 fn get_function(input: &str) -> Option<Function> {
     match input.to_ascii_uppercase().as_str() {
         "SQRT" => Some(Function::Sqrt),
+        "CBRT" => Some(Function::Cbrt),
+        "ABS" => Some(Function::Abs),
+        "EXP" => Some(Function::Exp),
+        "LN" => Some(Function::Ln),
+        "LOG" => Some(Function::Log),
+        "LOG2" => Some(Function::Log2),
         "SIN" => Some(Function::Sin),
         "COS" => Some(Function::Cos),
         "TAN" => Some(Function::Tan),
+        "ASIN" => Some(Function::Asin),
+        "ACOS" => Some(Function::Acos),
+        "ATAN" => Some(Function::Atan),
+        "ATAN2" => Some(Function::Atan2),
+        "SINH" => Some(Function::Sinh),
+        "COSH" => Some(Function::Cosh),
+        "TANH" => Some(Function::Tanh),
+        "FLOOR" => Some(Function::Floor),
+        "CEIL" => Some(Function::Ceil),
+        "ROUND" => Some(Function::Round),
+        "TRUNC" => Some(Function::Trunc),
+        "SIGN" => Some(Function::Sign),
+        "MIN" => Some(Function::Min),
+        "MAX" => Some(Function::Max),
+        "MOD" => Some(Function::Mod),
+        _ => None,
+    }
+}
+
+// Splits an unrecognized identifier back into variable and number tokens
+fn push_split(result: &mut Vec<Token>, name: &str) {
+    let mut digits = String::new();
+
+    for c in name.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+            continue;
+        }
+
+        if !digits.is_empty()
+            && let Ok(token) = parse_number(&digits)
+        {
+            result.push(token);
+        }
+        digits.clear();
+
+        match get_constant(&c.to_string()) {
+            Some(value) => result.push(Token::Float(value)),
+            None => result.push(Token::Variable(c)),
+        }
+    }
+
+    if !digits.is_empty()
+        && let Ok(token) = parse_number(&digits)
+    {
+        result.push(token);
+    }
+}
+
+// Named constants; `e` also covers a lone `e` inside a letter run
+fn get_constant(input: &str) -> Option<f64> {
+    match input.to_ascii_uppercase().as_str() {
+        "PI" => Some(std::f64::consts::PI),
+        "E" => Some(std::f64::consts::E),
         _ => None,
     }
 }

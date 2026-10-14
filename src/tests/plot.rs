@@ -81,7 +81,11 @@ fn test_nice_ticks_cover_range() {
 
     assert!(ticks.len() >= 3);
     assert!(ticks.contains(&0.0));
-    assert!(ticks.iter().all(|tick| *tick >= -10.0 - 1e-9 && *tick <= 10.0 + 1e-9));
+    assert!(
+        ticks
+            .iter()
+            .all(|tick| *tick >= -10.0 - 1e-9 && *tick <= 10.0 + 1e-9)
+    );
 }
 
 #[test]

@@ -250,8 +250,8 @@ impl KeyReader {
         }
 
         if self.buffer[1] == b'[' || self.buffer[1] == b'O' {
-            let end = (2..self.buffer.len())
-                .find(|index| (0x40..=0x7e).contains(&self.buffer[*index]));
+            let end =
+                (2..self.buffer.len()).find(|index| (0x40..=0x7e).contains(&self.buffer[*index]));
 
             let Some(end) = end else {
                 // Sequence still incomplete
@@ -321,5 +321,3 @@ fn decode_csi(sequence: &[u8]) -> Key {
         _ => Key::Unknown,
     }
 }
-
-

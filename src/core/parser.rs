@@ -2,7 +2,6 @@ use std::fmt;
 use std::iter::Peekable;
 use std::slice::Iter;
 
-use crate::core::Function;
 use crate::core::Token;
 use crate::core::node::Node;
 
@@ -20,9 +19,7 @@ impl fmt::Display for ParseError {
             ParseError::ExpectedOpeningParen => {
                 "[ERROR]: Syntax error: Expected '(' after function name!".to_string()
             }
-            ParseError::ExpectedClosingParen => {
-                "[ERROR]: Syntax error: Expected ')'!".to_string()
-            }
+            ParseError::ExpectedClosingParen => "[ERROR]: Syntax error: Expected ')'!".to_string(),
         };
 
         write!(f, "{}", name)
@@ -64,14 +61,14 @@ fn parse_expression(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError
 }
 
 fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
-    let mut left = parse_power(iter)?;
+    let mut left = parse_unary(iter)?;
 
     while let Some(token) = iter.peek() {
         match token {
             Token::Mul => {
                 iter.next();
 
-                let right = parse_power(iter)?;
+                let right = parse_unary(iter)?;
 
                 left = Node::Mul(Box::new(left), Box::new(right));
             }
@@ -79,7 +76,7 @@ fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
             Token::Div => {
                 iter.next();
 
-                let right = parse_power(iter)?;
+                let right = parse_unary(iter)?;
 
                 left = Node::Div(Box::new(left), Box::new(right));
             }
@@ -91,22 +88,35 @@ fn parse_term(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
     Ok(left)
 }
 
-fn parse_power(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
-    let mut left = parse_factor(iter)?;
+// Unary plus/minus binds looser than the power operator: -2^2 = -(2^2)
+fn parse_unary(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
+    match iter.peek() {
+        Some(Token::Minus) => {
+            iter.next();
 
-    while let Some(token) = iter.peek() {
-        match token {
-            Token::Pow => {
-                iter.next();
+            let inner = parse_unary(iter)?;
 
-                // Pow is right assoziative so we have to trigger that here
-                let right = parse_power(iter)?;
-
-                left = Node::Pow(Box::new(left), Box::new(right));
-            }
-
-            _ => break,
+            Ok(Node::Neg(Box::new(inner)))
         }
+        Some(Token::Plus) => {
+            iter.next();
+
+            parse_unary(iter)
+        }
+        _ => parse_power(iter),
+    }
+}
+
+fn parse_power(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
+    let left = parse_factor(iter)?;
+
+    if let Some(Token::Pow) = iter.peek() {
+        iter.next();
+
+        // Pow is right associative, and its exponent may be signed
+        let right = parse_unary(iter)?;
+
+        return Ok(Node::Pow(Box::new(left), Box::new(right)));
     }
 
     Ok(left)
@@ -121,16 +131,11 @@ fn parse_factor(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
         Some(Token::Function(func)) => {
             expect_lparen(iter)?;
 
-            let inner_expression = parse_expression(iter)?;
+            let arguments = parse_arguments(iter)?;
 
             expect_rparen(iter)?;
 
-            Ok(match func {
-                Function::Sqrt => Node::Sqrt(Box::new(inner_expression)),
-                Function::Sin => Node::Sin(Box::new(inner_expression)),
-                Function::Cos => Node::Cos(Box::new(inner_expression)),
-                Function::Tan => Node::Tan(Box::new(inner_expression)),
-            })
+            Ok(Node::Builtin(*func, arguments))
         }
 
         Some(Token::UserFunction(name)) => {

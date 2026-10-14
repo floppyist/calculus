@@ -54,7 +54,6 @@ pub struct App {
     focus: Focus,
     var_selection: usize,
     side_selection: usize,
-    status: String,
     scroll: usize,
     help_visible: bool,
     scales_visible: bool,
@@ -76,7 +75,6 @@ impl App {
             pending_d: false,
             var_selection: 0,
             side_selection: 0,
-            status: String::new(),
             scroll: 0,
             help_visible: false,
             scales_visible: false,
@@ -128,7 +126,11 @@ impl App {
         let state = State {
             scales: self.scales_visible,
             definitions,
-            plots: self.curves.iter().map(|curve| curve.source.clone()).collect(),
+            plots: self
+                .curves
+                .iter()
+                .map(|curve| curve.source.clone())
+                .collect(),
             history: self.editor.history().to_vec(),
         };
 
@@ -221,11 +223,17 @@ impl App {
             "Expressions & assignments",
             "  x = 3          define a variable",
             "  f(x) = 3*x^3   define a function",
+            "Math",
+            "  pi e π         constants (pi, e)",
+            "  sqrt cbrt abs exp ln log log2",
+            "  sin cos tan asin acos atan atan2",
+            "  sinh cosh tanh floor ceil round trunc sign",
+            "  log(x,base)  round(x,n)  min max mod",
             "Plotting",
             "  plot sin(x), cos(x)     define & plot (auto f, g, ...)",
             "  plot clear / scales     clear curves / toggle labels",
             "Definitions",
-            "  vars clear   funcs clear   clear all",
+            "  vars clear   funcs clear   clear all   history clear",
             "Editing (vi mode, Esc = normal)",
             "  h l 0 $ w b    move / start / end / word",
             "  i a I A        insert before / after / start / end",
@@ -267,7 +275,7 @@ impl App {
             None,
         );
 
-        // Title " Input  [MODE] ..." with the mode word colour coded
+        // Title " Input  [MODE]" with the mode word colour coded
         let (mode, mode_color) = match self.input_mode {
             InputMode::Insert => ("INSERT", Color::BrightRed),
             InputMode::Normal => ("NORMAL", Color::BrightBlue),
@@ -295,13 +303,7 @@ impl App {
         title_x += used as isize;
         remaining = remaining.saturating_sub(used);
 
-        let suffix = if self.status.is_empty() {
-            "]".to_string()
-        } else {
-            format!("]  |  {}", self.status)
-        };
-
-        draw_title_segment(canvas, title_x, title_y, remaining, &suffix, border);
+        draw_title_segment(canvas, title_x, title_y, remaining, "]", border);
 
         if rect.height < 3 || rect.width < 4 {
             return;
@@ -321,7 +323,11 @@ impl App {
 
         let chars = self.editor.chars();
         let cursor = self.editor.cursor();
-        let offset = if cursor >= avail { cursor + 1 - avail } else { 0 };
+        let offset = if cursor >= avail {
+            cursor + 1 - avail
+        } else {
+            0
+        };
         let visible: String = chars.iter().skip(offset).take(avail).collect();
 
         canvas.print(text_x, line_y, &visible, value_style());
@@ -332,12 +338,7 @@ impl App {
             if cursor_index < avail {
                 let ch = chars.get(cursor).copied().unwrap_or(' ');
 
-                canvas.put(
-                    text_x + cursor_index as isize,
-                    line_y,
-                    ch,
-                    cursor_style(),
-                );
+                canvas.put(text_x + cursor_index as isize, line_y, ch, cursor_style());
             }
         }
     }
@@ -520,7 +521,12 @@ impl App {
         }
 
         let Some((y_min, y_max)) = y_range else {
-            canvas.print(inner.x as isize, data.y as isize, "(no finite values)", hint_style());
+            canvas.print(
+                inner.x as isize,
+                data.y as isize,
+                "(no finite values)",
+                hint_style(),
+            );
             return;
         };
 
@@ -643,7 +649,6 @@ impl App {
         }
     }
 
-
     fn draw_side(&self, canvas: &mut Canvas, rect: Rect) {
         if rect.height < 3 || rect.width < 2 {
             return;
@@ -710,7 +715,11 @@ impl App {
 
         let selection = self.var_selection.min(names.len() - 1);
         let view = inner.height;
-        let offset = if selection >= view { selection + 1 - view } else { 0 };
+        let offset = if selection >= view {
+            selection + 1 - view
+        } else {
+            0
+        };
 
         for (row, name) in names.iter().skip(offset).take(view).enumerate() {
             let index = offset + row;
@@ -764,7 +773,11 @@ impl App {
 
         let selection = self.side_selection.min(names.len() - 1);
         let view = inner.height;
-        let offset = if selection >= view { selection + 1 - view } else { 0 };
+        let offset = if selection >= view {
+            selection + 1 - view
+        } else {
+            0
+        };
         let mut row = 0;
 
         for (index, name) in names.iter().enumerate().skip(offset) {
@@ -865,6 +878,12 @@ impl App {
     }
 
     fn handle_insert_key(&mut self, key: Key) {
+        // '?' opens the help overlay directly, without pressing Enter first
+        if key == Key::Char('?') {
+            self.help_visible = true;
+            return;
+        }
+
         match key {
             Key::Char(ch) => self.editor.insert(ch),
             Key::Enter => self.submit(),
@@ -891,7 +910,6 @@ impl App {
             Key::CtrlC => {
                 self.editor.clear();
                 self.input_mode = InputMode::Insert;
-                self.status = "input cleared".to_string();
             }
             Key::CtrlD => {
                 if self.editor.is_empty() {
@@ -953,6 +971,7 @@ impl App {
                 self.editor.clamp_normal();
             }
             Key::Char('i') => self.input_mode = InputMode::Insert,
+            Key::Char('?') => self.help_visible = true,
             Key::Char('I') => {
                 self.editor.home();
                 self.input_mode = InputMode::Insert;
@@ -986,7 +1005,6 @@ impl App {
             Key::CtrlC => {
                 self.editor.clear();
                 self.input_mode = InputMode::Insert;
-                self.status = "input cleared".to_string();
             }
             Key::CtrlD => {
                 if self.editor.is_empty() {
@@ -1099,7 +1117,7 @@ impl App {
 
         if let Some(position) = self.curves.iter().position(|curve| curve.source == source) {
             self.curves.remove(position);
-            self.status = format!("removed plot {}", source);
+            self.push_output(result_style(), format!("removed plot {}", source));
             return;
         }
 
@@ -1107,7 +1125,8 @@ impl App {
             Some(value) => *value,
             None => return,
         };
-        let color = PALETTE[self.curves.len() % PALETTE.len()];
+        let used: Vec<Color> = self.curves.iter().map(|curve| curve.color).collect();
+        let color = pick_color(&used);
 
         self.curves.push(Curve {
             source: source.clone(),
@@ -1115,7 +1134,9 @@ impl App {
             color,
             is_variable: true,
         });
-        self.status = format!("plotted {} = {}", name, format_number(value));
+        let message = format!("plotted {} = {}", name, format_number(value));
+
+        self.push_output(result_style(), message);
     }
 
     fn toggle_function(&mut self) {
@@ -1134,7 +1155,10 @@ impl App {
         };
 
         if params.len() != 1 {
-            self.status = format!("{} needs exactly one parameter to plot", name);
+            self.push_output(
+                hint_style(),
+                format!("{} needs exactly one parameter to plot", name),
+            );
             return;
         }
 
@@ -1142,11 +1166,12 @@ impl App {
 
         if let Some(position) = self.curves.iter().position(|curve| curve.source == source) {
             self.curves.remove(position);
-            self.status = format!("removed plot {}", source);
+            self.push_output(result_style(), format!("removed plot {}", source));
             return;
         }
 
-        let color = PALETTE[self.curves.len() % PALETTE.len()];
+        let used: Vec<Color> = self.curves.iter().map(|curve| curve.color).collect();
+        let color = pick_color(&used);
 
         self.curves.push(Curve {
             source: source.clone(),
@@ -1154,7 +1179,7 @@ impl App {
             color,
             is_variable: false,
         });
-        self.status = format!("plotted {}", source);
+        self.push_output(result_style(), format!("plotted {}", source));
     }
 
     fn delete_selected(&mut self) {
@@ -1179,7 +1204,7 @@ impl App {
 
         if self.environment.remove_variable(name) {
             self.curves.retain(|curve| curve.source != name.to_string());
-            self.status = format!("{} deleted", name);
+            self.push_output(result_style(), format!("{} deleted", name));
 
             let remaining = self.variable_names().len();
 
@@ -1202,8 +1227,9 @@ impl App {
         let name = names[index].clone();
 
         if self.environment.remove_function(&name) {
-            self.curves.retain(|curve| curve.source != format!("{}(x)", name));
-            self.status = format!("{} deleted", name);
+            self.curves
+                .retain(|curve| curve.source != format!("{}(x)", name));
+            self.push_output(result_style(), format!("{} deleted", name));
 
             let remaining = self.function_names().len();
 
@@ -1271,6 +1297,12 @@ impl App {
             return;
         }
 
+        if trimmed == "history clear" || trimmed == "history -c" {
+            self.command_clear_history();
+            self.persist();
+            return;
+        }
+
         match self.environment.execute(&trimmed) {
             Ok(outcome) => self.push_output(result_style(), format_outcome(outcome)),
             Err(error) => self.push_output(error_style(), format!("{}", error)),
@@ -1288,7 +1320,6 @@ impl App {
 
         let state = if self.scales_visible { "on" } else { "off" };
 
-        self.status = format!("scales {}", state);
         self.push_output(result_style(), format!("scales {}", state));
     }
 
@@ -1304,7 +1335,6 @@ impl App {
             let _ = std::fs::remove_file(path);
         }
 
-        self.status = "cleared all".to_string();
         self.push_output(result_style(), "cleared all".to_string());
     }
 
@@ -1312,7 +1342,6 @@ impl App {
         self.environment.clear_variables();
         self.curves.retain(|curve| !curve.is_variable);
         self.var_selection = 0;
-        self.status = "variables cleared".to_string();
         self.push_output(result_style(), "variables cleared".to_string());
     }
 
@@ -1320,46 +1349,54 @@ impl App {
         self.environment.clear_functions();
         self.curves.retain(|curve| curve.is_variable);
         self.side_selection = 0;
-        self.status = "functions cleared".to_string();
         self.push_output(result_style(), "functions cleared".to_string());
+    }
+
+    fn command_clear_history(&mut self) {
+        self.editor.set_history(Vec::new());
+        self.push_output(result_style(), "history cleared".to_string());
     }
 
     fn command_plot(&mut self, rest: &str) {
         let rest = rest.trim();
 
         if rest.is_empty() {
-            self.push_output(error_style(), "usage: plot <expression>[, <expression>]".to_string());
+            self.push_output(
+                error_style(),
+                "usage: plot <expression>[, <expression>]".to_string(),
+            );
             return;
         }
 
         if rest == "clear" {
             self.curves.clear();
-            self.status = "plot cleared".to_string();
+            self.push_output(result_style(), "plot cleared".to_string());
             return;
         }
 
         let mut curves = Vec::new();
         let mut errors = Vec::new();
+        let mut used: Vec<Color> = Vec::new();
 
-        for (index, part) in rest
+        for part in rest
             .split(',')
             .map(|part| part.trim())
             .filter(|part| !part.is_empty())
-            .enumerate()
         {
-            let color = PALETTE[index % PALETTE.len()];
-
             // A lone defined variable plots as a horizontal line
-            if let Some(name) = single_variable(part) {
-                if let Some(value) = self.environment.values().get(&name).copied() {
-                    curves.push(Curve {
-                        source: name.to_string(),
-                        node: Node::FloatNumber(value),
-                        color,
-                        is_variable: true,
-                    });
-                    continue;
-                }
+            if let Some(name) = single_variable(part)
+                && let Some(value) = self.environment.values().get(&name).copied()
+            {
+                let color = pick_color(&used);
+
+                used.push(color);
+                curves.push(Curve {
+                    source: name.to_string(),
+                    node: Node::FloatNumber(value),
+                    color,
+                    is_variable: true,
+                });
+                continue;
             }
 
             let node = match self.environment.expression(part) {
@@ -1372,6 +1409,9 @@ impl App {
 
             // An existing f(x) call is referenced, not redefined
             if let Some(name) = self.function_reference(&node) {
+                let color = pick_color(&used);
+
+                used.push(color);
                 curves.push(Curve {
                     source: format!("{}(x)", name),
                     node,
@@ -1386,12 +1426,17 @@ impl App {
             let definition = format!("{}(x) = {}", name, part);
 
             match self.environment.execute(&definition) {
-                Ok(_) => curves.push(Curve {
-                    source: format!("{}(x)", name),
-                    node: Node::Call(name, vec![Node::Variable('x')]),
-                    color,
-                    is_variable: false,
-                }),
+                Ok(_) => {
+                    let color = pick_color(&used);
+
+                    used.push(color);
+                    curves.push(Curve {
+                        source: format!("{}(x)", name),
+                        node: Node::Call(name, vec![Node::Variable('x')]),
+                        color,
+                        is_variable: false,
+                    });
+                }
                 Err(error) => errors.push(format!("{}: {}", part, error)),
             }
         }
@@ -1405,17 +1450,16 @@ impl App {
         }
 
         self.curves = curves;
-        self.status = format!("plotting {} curve(s)", self.curves.len());
     }
 
     // Some("f") when the node is exactly f(x) for an existing user function
     fn function_reference(&self, node: &Node) -> Option<String> {
-        if let Node::Call(name, args) = node {
-            if args.len() == 1 && matches!(args[0], Node::Variable('x')) {
-                if self.environment.functions().contains_key(name) {
-                    return Some(name.clone());
-                }
-            }
+        if let Node::Call(name, args) = node
+            && args.len() == 1
+            && matches!(args[0], Node::Variable('x'))
+            && self.environment.functions().contains_key(name)
+        {
+            return Some(name.clone());
         }
 
         None
@@ -1497,7 +1541,11 @@ fn wrap_with_stamp(stamp: Option<&str>, text: &str, width: usize) -> Vec<(Option
 
         let take = chars.len().min(available);
         let chunk: String = chars.drain(..take).collect();
-        let stamp_here = if first { stamp.map(|stamp| stamp.to_string()) } else { None };
+        let stamp_here = if first {
+            stamp.map(|stamp| stamp.to_string())
+        } else {
+            None
+        };
 
         result.push((stamp_here, chunk));
         first = false;
@@ -1512,6 +1560,17 @@ fn wrap_with_stamp(stamp: Option<&str>, text: &str, width: usize) -> Vec<(Option
 
 fn border_style() -> Style {
     Style::fg(Color::BrightBlack)
+}
+
+// First palette colour not currently in use, so plots keep distinct colours
+fn pick_color(used: &[Color]) -> Color {
+    for color in PALETTE {
+        if !used.contains(&color) {
+            return color;
+        }
+    }
+
+    PALETTE[used.len() % PALETTE.len()]
 }
 
 // Draws one part of a box title clipped with an ellipsis; returns columns used

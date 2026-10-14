@@ -113,4 +113,3 @@ pub fn now_hms() -> String {
 pub fn now_hms() -> String {
     "--:--:--".to_string()
 }
-

@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::core::Function;
+
 // Maximum call depth so recursive user functions cannot blow the stack
 const MAX_CALL_DEPTH: usize = 256;
 
@@ -17,10 +19,11 @@ pub enum Node {
 
     Pow(Box<Node>, Box<Node>),
 
-    Sqrt(Box<Node>),
-    Sin(Box<Node>),
-    Cos(Box<Node>),
-    Tan(Box<Node>),
+    // Unary minus
+    Neg(Box<Node>),
+
+    // Built-in function call: function + arguments
+    Builtin(Function, Vec<Node>),
 
     // User function call: name + arguments
     Call(String, Vec<Node>),
@@ -48,10 +51,16 @@ impl Node {
             Node::Div(left, right) => left.evaluate(ctx) / right.evaluate(ctx),
             Node::Pow(left, right) => left.evaluate(ctx).powf(right.evaluate(ctx)),
 
-            Node::Sqrt(left) => left.evaluate(ctx).sqrt(),
-            Node::Sin(left) => left.evaluate(ctx).sin(),
-            Node::Cos(left) => left.evaluate(ctx).cos(),
-            Node::Tan(left) => left.evaluate(ctx).tan(),
+            Node::Neg(inner) => -inner.evaluate(ctx),
+
+            Node::Builtin(func, arguments) => {
+                let values: Vec<f64> = arguments
+                    .iter()
+                    .map(|argument| argument.evaluate(ctx))
+                    .collect();
+
+                func.eval(&values)
+            }
 
             Node::Call(name, arguments) => {
                 if ctx.depth >= MAX_CALL_DEPTH {

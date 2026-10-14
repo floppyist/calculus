@@ -63,10 +63,134 @@ pub enum PreinterceptToken {
     Irrelevant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Function {
+    // Roots and powers
     Sqrt,
+    Cbrt,
+    Abs,
+    // Exponential and logarithms
+    Exp,
+    Ln,
+    Log,
+    Log2,
+    // Trigonometry
     Sin,
     Cos,
     Tan,
+    Asin,
+    Acos,
+    Atan,
+    Atan2,
+    // Hyperbolic
+    Sinh,
+    Cosh,
+    Tanh,
+    // Rounding and sign
+    Floor,
+    Ceil,
+    Round,
+    Trunc,
+    Sign,
+    // Binary helpers
+    Min,
+    Max,
+    Mod,
+}
+
+impl Function {
+    pub fn name(self) -> &'static str {
+        match self {
+            Function::Sqrt => "sqrt",
+            Function::Cbrt => "cbrt",
+            Function::Abs => "abs",
+            Function::Exp => "exp",
+            Function::Ln => "ln",
+            Function::Log => "log",
+            Function::Log2 => "log2",
+            Function::Sin => "sin",
+            Function::Cos => "cos",
+            Function::Tan => "tan",
+            Function::Asin => "asin",
+            Function::Acos => "acos",
+            Function::Atan => "atan",
+            Function::Atan2 => "atan2",
+            Function::Sinh => "sinh",
+            Function::Cosh => "cosh",
+            Function::Tanh => "tanh",
+            Function::Floor => "floor",
+            Function::Ceil => "ceil",
+            Function::Round => "round",
+            Function::Trunc => "trunc",
+            Function::Sign => "sign",
+            Function::Min => "min",
+            Function::Max => "max",
+            Function::Mod => "mod",
+        }
+    }
+
+    // Accepted argument counts; `log(x)` base 10 and `log(x, base)`, round to n digits
+    pub fn arities(self) -> &'static [usize] {
+        match self {
+            Function::Log | Function::Round => &[1, 2],
+            Function::Atan2 | Function::Min | Function::Max | Function::Mod => &[2],
+            _ => &[1],
+        }
+    }
+
+    pub fn eval(self, args: &[f64]) -> f64 {
+        match self {
+            Function::Sqrt => args[0].sqrt(),
+            Function::Cbrt => args[0].cbrt(),
+            Function::Abs => args[0].abs(),
+            Function::Exp => args[0].exp(),
+            Function::Ln => args[0].ln(),
+            Function::Log => match args {
+                [value] => value.log10(),
+                [value, base] => value.log(*base),
+                _ => f64::NAN,
+            },
+            Function::Log2 => args[0].log2(),
+            Function::Sin => args[0].sin(),
+            Function::Cos => args[0].cos(),
+            Function::Tan => args[0].tan(),
+            Function::Asin => args[0].asin(),
+            Function::Acos => args[0].acos(),
+            Function::Atan => args[0].atan(),
+            Function::Atan2 => args[0].atan2(args[1]),
+            Function::Sinh => args[0].sinh(),
+            Function::Cosh => args[0].cosh(),
+            Function::Tanh => args[0].tanh(),
+            Function::Floor => args[0].floor(),
+            Function::Ceil => args[0].ceil(),
+            Function::Round => match args {
+                [value] => value.round(),
+                [value, digits] => round_to(*value, *digits),
+                _ => f64::NAN,
+            },
+            Function::Trunc => args[0].trunc(),
+            Function::Sign => {
+                if args[0].is_nan() {
+                    f64::NAN
+                } else if args[0] > 0.0 {
+                    1.0
+                } else if args[0] < 0.0 {
+                    -1.0
+                } else {
+                    0.0
+                }
+            }
+            Function::Min => args[0].min(args[1]),
+            Function::Max => args[0].max(args[1]),
+            Function::Mod => args[0] % args[1],
+        }
+    }
+}
+
+// Rounds to a number of decimal places (negative digits round to tens, ...)
+fn round_to(value: f64, digits: f64) -> f64 {
+    let digits = digits.clamp(-15.0, 15.0) as i32;
+    let factor = 10f64.powi(digits);
+
+    (value * factor).round() / factor
 }

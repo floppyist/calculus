@@ -56,7 +56,10 @@ fn test_editor_set_and_read_history() {
 
     editor.set_history(vec!["a".to_string(), "b".to_string()]);
 
-    assert_eq!(editor.history().to_vec(), vec!["a".to_string(), "b".to_string()]);
+    assert_eq!(
+        editor.history().to_vec(),
+        vec!["a".to_string(), "b".to_string()]
+    );
 
     editor.history_prev();
     assert_eq!(editor.text(), "b");

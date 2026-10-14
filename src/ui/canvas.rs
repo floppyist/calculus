@@ -132,7 +132,14 @@ impl Canvas {
         }
     }
 
-    pub fn print_clipped(&mut self, x: isize, y: isize, max_width: usize, text: &str, style: Style) {
+    pub fn print_clipped(
+        &mut self,
+        x: isize,
+        y: isize,
+        max_width: usize,
+        text: &str,
+        style: Style,
+    ) {
         if max_width == 0 {
             return;
         }
@@ -200,7 +207,14 @@ impl Canvas {
     }
 
     // Sets a dot in the 2x4 braille cell at (x, y)
-    pub fn put_braille(&mut self, x: usize, y: usize, dot_col: usize, dot_row: usize, style: Style) {
+    pub fn put_braille(
+        &mut self,
+        x: usize,
+        y: usize,
+        dot_col: usize,
+        dot_row: usize,
+        style: Style,
+    ) {
         if x >= self.width || y >= self.height || dot_col > 1 || dot_row > 3 {
             return;
         }
@@ -265,5 +279,3 @@ fn sgr(style: Style) -> String {
 
     format!("\x1b[{}m", codes.join(";"))
 }
-
-

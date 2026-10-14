@@ -6,6 +6,9 @@ use crate::core::node::{EvalContext, Node};
 use crate::core::parser::{ParseError, generate_ast};
 use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side};
 
+// Names auto assigned to plotted curves ('e' is reserved for Euler's number)
+const AUTO_NAMES: &str = "fghijklmnopqrstuvwxyzabcd";
+
 // A definition (variable or function) with its source text for display
 #[derive(Debug)]
 pub struct Definition {
@@ -19,6 +22,7 @@ pub enum EvalError {
     Tokenizer(TokenizerError),
     Parse(ParseError),
     InvalidAssignment,
+    UnknownVariable(char),
     FunctionNotDefined(String),
     WrongArgumentCount(String),
     CyclicDependency,
@@ -30,6 +34,9 @@ impl fmt::Display for EvalError {
             EvalError::Tokenizer(err) => write!(f, "{}", err),
             EvalError::Parse(err) => write!(f, "{}", err),
             EvalError::InvalidAssignment => write!(f, "[ERROR]: Invalid assignment"),
+            EvalError::UnknownVariable(name) => {
+                write!(f, "[ERROR]: Variable '{}' is not defined", name)
+            }
             EvalError::FunctionNotDefined(name) => {
                 write!(f, "[ERROR]: Function '{}' is not defined", name)
             }
@@ -94,9 +101,9 @@ impl Environment {
         &self.values
     }
 
-    // Next free function name: f..z, a..e, then f2, g2, ...
+    // Next free function name: f..z, a..d, then f2, g2, ... ('e' is reserved for Euler's number)
     pub fn next_function_name(&self) -> String {
-        for name in "fghijklmnopqrstuvwxyzabcde".chars() {
+        for name in AUTO_NAMES.chars() {
             if !self.functions.contains_key(&name.to_string()) {
                 return name.to_string();
             }
@@ -105,7 +112,7 @@ impl Environment {
         let mut suffix = 2;
 
         loop {
-            for name in "fghijklmnopqrstuvwxyzabcde".chars() {
+            for name in AUTO_NAMES.chars() {
                 let candidate = format!("{}{}", name, suffix);
 
                 if !self.functions.contains_key(&candidate) {
@@ -223,6 +230,10 @@ impl Environment {
     fn evaluate_expression(&self, expression: &str) -> Result<Outcome, EvalError> {
         let ast = self.parse_and_validate(expression, &[])?;
 
+        if let Some(name) = self.unknown_variable(&ast) {
+            return Err(EvalError::UnknownVariable(name));
+        }
+
         let functions = self.function_map();
         let ctx = EvalContext {
             variables: &self.values,
@@ -233,9 +244,34 @@ impl Environment {
         Ok(Outcome::Value(ast.evaluate(&ctx)))
     }
 
+    // First free variable of the expression that is not defined, if any
+    fn unknown_variable(&self, node: &Node) -> Option<char> {
+        let functions = self.function_map();
+        let mut collected = HashSet::new();
+        let mut visited_functions = HashSet::new();
+
+        collect_vars(
+            node,
+            &functions,
+            &HashSet::new(),
+            &mut visited_functions,
+            &mut collected,
+        );
+
+        let mut names: Vec<char> = collected
+            .into_iter()
+            .filter(|name| !self.values.contains_key(name))
+            .collect();
+
+        names.sort();
+        names.into_iter().next()
+    }
+
     fn apply_assignment(&mut self, left: &str, right: &str) -> Result<Outcome, EvalError> {
-        let left_target = parse_target(left)?;
-        let right_target = parse_target(right)?;
+        // A function signature is only ever a target on the left side; the
+        // right side is an expression (a bare f(x) there is a call, not a target)
+        let left_target = parse_target(left, true)?;
+        let right_target = parse_target(right, false)?;
 
         match (left_target, right_target) {
             // Exactly one side must be the target
@@ -274,12 +310,14 @@ impl Environment {
                 // Own name is known while parsing the body (recursion)
                 let body = self.parse_and_validate(expression, &[(name.clone(), params.len())])?;
 
-                self.functions
-                    .insert(name.clone(), Definition {
+                self.functions.insert(
+                    name.clone(),
+                    Definition {
                         source: expression.to_string(),
                         params,
                         body,
-                    });
+                    },
+                );
 
                 self.recompute()?;
 
@@ -318,7 +356,10 @@ impl Environment {
         self.functions
             .iter()
             .map(|(name, definition)| {
-                (name.clone(), (definition.params.clone(), definition.body.clone()))
+                (
+                    name.clone(),
+                    (definition.params.clone(), definition.body.clone()),
+                )
             })
             .collect()
     }
@@ -331,10 +372,7 @@ impl Environment {
 
         for name in &order {
             let value = {
-                let definition = self
-                    .variables
-                    .get(name)
-                    .expect("variable must exist");
+                let definition = self.variables.get(name).expect("variable must exist");
 
                 let ctx = EvalContext {
                     variables: &values,
@@ -418,8 +456,8 @@ impl Environment {
     }
 }
 
-// Determines the target of one side: single variable or function signature
-fn parse_target(side: &str) -> Result<Option<Target>, EvalError> {
+// Determines the target of one side: single variable, or a function signature on the left
+fn parse_target(side: &str, allow_function: bool) -> Result<Option<Target>, EvalError> {
     let trimmed = side.trim();
 
     if trimmed.is_empty() {
@@ -430,6 +468,10 @@ fn parse_target(side: &str) -> Result<Option<Target>, EvalError> {
 
     if let [Token::Variable(name)] = tokens.as_slice() {
         return Ok(Some(Target::Variable(*name)));
+    }
+
+    if !allow_function {
+        return Ok(None);
     }
 
     Ok(parse_function_signature(&tokens))
@@ -453,7 +495,12 @@ fn parse_function_signature(tokens: &[Token]) -> Option<Target> {
     // Empty parameter list is allowed
     if let Some(Token::Rparen) = iter.peek() {
         iter.next();
-        return Some(Target::Function(name, params));
+
+        return if iter.next().is_none() {
+            Some(Target::Function(name, params))
+        } else {
+            None
+        };
     }
 
     loop {
@@ -469,12 +516,29 @@ fn parse_function_signature(tokens: &[Token]) -> Option<Target> {
         }
     }
 
-    Some(Target::Function(name, params))
+    // The whole side must be exactly the signature, not just a prefix of it
+    if iter.next().is_none() {
+        Some(Target::Function(name, params))
+    } else {
+        None
+    }
 }
 
 // Validates that all calls match known functions with the right argument count
 fn validate_calls(node: &Node, arities: &HashMap<String, usize>) -> Result<(), EvalError> {
     match node {
+        Node::Builtin(func, arguments) => {
+            if !func.arities().contains(&arguments.len()) {
+                return Err(EvalError::WrongArgumentCount(func.name().to_string()));
+            }
+
+            for argument in arguments {
+                validate_calls(argument, arities)?;
+            }
+
+            Ok(())
+        }
+
         Node::Call(name, arguments) => {
             let expected = arities
                 .get(name)
@@ -491,6 +555,8 @@ fn validate_calls(node: &Node, arities: &HashMap<String, usize>) -> Result<(), E
             Ok(())
         }
 
+        Node::Neg(inner) => validate_calls(inner, arities),
+
         Node::Add(left, right)
         | Node::Sub(left, right)
         | Node::Mul(left, right)
@@ -498,10 +564,6 @@ fn validate_calls(node: &Node, arities: &HashMap<String, usize>) -> Result<(), E
         | Node::Pow(left, right) => {
             validate_calls(left, arities)?;
             validate_calls(right, arities)
-        }
-
-        Node::Sqrt(inner) | Node::Sin(inner) | Node::Cos(inner) | Node::Tan(inner) => {
-            validate_calls(inner, arities)
         }
 
         _ => Ok(()),
@@ -532,8 +594,14 @@ fn collect_vars(
             collect_vars(right, functions, bound, visited_functions, out);
         }
 
-        Node::Sqrt(inner) | Node::Sin(inner) | Node::Cos(inner) | Node::Tan(inner) => {
+        Node::Neg(inner) => {
             collect_vars(inner, functions, bound, visited_functions, out);
+        }
+
+        Node::Builtin(_, arguments) => {
+            for argument in arguments {
+                collect_vars(argument, functions, bound, visited_functions, out);
+            }
         }
 
         Node::Call(name, arguments) => {
@@ -541,16 +609,16 @@ fn collect_vars(
                 collect_vars(argument, functions, bound, visited_functions, out);
             }
 
-            if visited_functions.insert(name.clone()) {
-                if let Some((parameters, body)) = functions.get(name) {
-                    let mut local_bound = bound.clone();
+            if visited_functions.insert(name.clone())
+                && let Some((parameters, body)) = functions.get(name)
+            {
+                let mut local_bound = bound.clone();
 
-                    for parameter in parameters {
-                        local_bound.insert(*parameter);
-                    }
-
-                    collect_vars(body, functions, &local_bound, visited_functions, out);
+                for parameter in parameters {
+                    local_bound.insert(*parameter);
                 }
+
+                collect_vars(body, functions, &local_bound, visited_functions, out);
             }
         }
 

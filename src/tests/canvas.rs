@@ -34,7 +34,10 @@ fn test_put_braille_sets_bits() {
     canvas.put_braille(0, 0, 0, 0, Style::new());
 
     let rendered = canvas.to_string();
-    let ch = rendered.chars().find(|c| (*c as u32) >= BRAILLE_BASE).unwrap();
+    let ch = rendered
+        .chars()
+        .find(|c| (*c as u32) >= BRAILLE_BASE)
+        .unwrap();
 
     assert_eq!(ch, char::from_u32(BRAILLE_BASE + 0x01).unwrap());
 }

@@ -94,5 +94,3 @@ fn split_content(columns: usize, height: usize) -> (Rect, Option<Rect>) {
 
     (main, None)
 }
-
-

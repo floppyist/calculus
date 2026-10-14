@@ -8,10 +8,7 @@ pub const X_MAX: f64 = 10.0;
 
 // Braille: base codepoint and mapping (column, row) -> bit
 pub const BRAILLE_BASE: u32 = 0x2800;
-pub const DOT_BITS: [[u32; 4]; 2] = [
-    [0x01, 0x02, 0x04, 0x40],
-    [0x08, 0x10, 0x20, 0x80],
-];
+pub const DOT_BITS: [[u32; 4]; 2] = [[0x01, 0x02, 0x04, 0x40], [0x08, 0x10, 0x20, 0x80]];
 
 // Samples a function across the x range (one column per pixel)
 pub fn sample_curve(
@@ -222,5 +219,3 @@ fn format_number(value: f64) -> String {
         format!("{:.2}", value)
     }
 }
-
-

@@ -74,7 +74,8 @@ impl Backend {
             let output = GetStdHandle(STD_OUTPUT_HANDLE);
 
             let mut input_mode: Dword = 0;
-            let input_ok = input != INVALID_HANDLE_VALUE && GetConsoleMode(input, &mut input_mode) != 0;
+            let input_ok =
+                input != INVALID_HANDLE_VALUE && GetConsoleMode(input, &mut input_mode) != 0;
 
             let mut output_mode: Dword = 0;
             let output_ok =
