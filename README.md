@@ -8,9 +8,11 @@ The application provides an interactive terminal interface as well as a line-ori
 
 ---
 
-![Dashboard](screenshots/screenshot_001.png)
+![Plotting](screenshots/screenshot_001.png)
 
-![Dashboard](screenshots/screenshot_002.png)
+![Simple Calc](screenshots/screenshot_002.png)
+
+![Visual Mode](screenshots/screenshot_003.png)
 
 ---
 
