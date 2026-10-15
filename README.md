@@ -8,6 +8,12 @@ The application provides an interactive terminal interface as well as a line-ori
 
 ---
 
+![Dashboard](screenshots/screenshot_001.png)
+
+![Dashboard](screenshots/screenshot_002.png)
+
+---
+
 ## Table of Contents
 
 - [Features](#features)
@@ -667,8 +673,3 @@ For larger changes, opening an issue before submitting a pull request can help c
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for details.
-
-* **Project:** floppyist/calculus
-* **Language:** Rust
-* **Edition:** Rust 2024
-* **Application type:** Terminal-based mathematical calculator
