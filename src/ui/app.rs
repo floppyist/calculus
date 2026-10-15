@@ -26,8 +26,8 @@ const HELP_LINES: &[&str] = &[
     "Expressions & assignments",
     "  x = 3                     assign a variable (also 3 = x)",
     "  f(x) = 3*x^3              define a function; f(2+1) works",
-    "  + - * / ^   implicit multiplication: 2x, 3sin(x), (1+x)(1-x)",
-    "  ^ is right associative: 2^3^2 = 512 ; unary minus: -2^2 = -4",
+    "  + - * / ^                 implicit multiplication: 2x, 3sin(x), (1+x)(1-x)",
+    "  ^                         is right associative: 2^3^2 = 512 ; unary minus: -2^2 = -4",
     "  f(x)^-1                   inverse function (sin(x)^-1 = asin(x))",
     "",
     "Constants",
@@ -59,22 +59,21 @@ const HELP_LINES: &[&str] = &[
     "  mod(a, b)                 remainder of a divided by b",
     "",
     "Calculus",
-    "  simplify <expr>           rewrite an expression in a compact form",
+    "  simp <expr>               rewrite an expression in a compact form",
     "  diff <expr>               derivative d/dx, stored as a new function",
-    "  integrate <expr>          antiderivative (+ C), stored as a function",
-    "  integrate <expr>, a, b    definite integral from a to b",
-    "  (diff and integrate act on the variable x)",
+    "  int <expr>                antiderivative (+ C), stored as a function",
+    "  int <expr>, a, b          definite integral from a to b",
     "",
     "Plotting",
     "  plot sin(x), cos(x)       define & plot, auto named f, g, ...",
     "  plot <expr>               plot by colour index",
-    "  clear plots               remove all curves",
-    "  scales / scales on / off  toggle the axis labels",
+    "  scales                    toggle the axis labels",
     "",
     "Definitions",
     "  clear                     clear the output",
     "  clear vars                remove all variables",
     "  clear funcs               remove all functions",
+    "  clear plots               remove all curves",
     "  clear all                 wipe the session and the state file",
     "  clear history             forget the input history",
     "",
@@ -2186,7 +2185,7 @@ impl App {
 
         match self.environment.integrate(expression, bounds) {
             Ok(IntegralOutcome::Function { name, source }) => {
-                self.push_output(result_style(), format!("{}(x) = {}   (+ C)", name, source));
+                self.push_output(result_style(), format!("{}(x) = {} (+ C)", name, source));
             }
             Ok(IntegralOutcome::Value(value)) => {
                 self.push_output(result_style(), format!("= {}", format_number(value)));

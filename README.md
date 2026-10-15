@@ -284,24 +284,17 @@ The following commands are recognized by the command parser:
 | `?` | Request help in interactive mode |
 | `quit` or `exit` | Exit the application |
 | `plot <expression>` | Plot an expression |
-| `scales` | Query the scale-display setting |
-| `scales on` | Enable scale display |
-| `scales off` | Disable scale display |
+| `scales` | Toggles axis lables |
 | `clear` | Clear the output area in interactive mode |
 | `clear vars` | Remove all variable definitions |
 | `clear funcs` | Remove all user-defined functions |
 | `clear plots` | Remove plotted curves in interactive mode |
 | `clear all` | Clear variables and functions |
 | `clear history` | Clear input history in interactive mode |
-| `simplify <expression>` | Simplify an expression symbolically |
 | `simp <expression>` | Alias for simplify |
 | `diff <expression>` | Differentiate an expression |
-| `derive <expression>` | Alias for diff |
-| `derivative <expression>` | Alias for diff |
-| `integrate <expression>` | Compute an indefinite integral |
-| `integrate <expression>, <a>, <b>` | Compute a definite integral |
-| `integral <expression>` | Alias for integrate |
-| `int <expression>` | Alias for integrate |
+| `int <expression>` | Compute an indefinite integral |
+| `int <expression>, <a>, <b>` | Compute a definite integral |
 
 *(Mode-specific behavior: Some commands are implemented differently in line-oriented mode. Help is only available in interactive mode, while commands that manipulate the interactive display, plots, history, or scales may have no visible effect in line-oriented mode.)*
 
@@ -679,5 +672,3 @@ This project is licensed under the MIT License. See the `LICENSE` file for detai
 * **Language:** Rust
 * **Edition:** Rust 2024
 * **Application type:** Terminal-based mathematical calculator
-
-```
