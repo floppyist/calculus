@@ -129,3 +129,21 @@ fn test_number_after_bracket_without_any_operator() {
     assert_eq!(format!("{:?}", tokens[5]), "Mul");
     assert_eq!(format!("{:?}", tokens[6]), "Int(3)");
 }
+
+#[test]
+fn test_inverse_trig_functions() {
+    let tokens = check("asin(x)+acos(x)+atan(x)");
+
+    assert_eq!(format!("{:?}", tokens[0]), "Function(Asin)");
+    assert_eq!(format!("{:?}", tokens[5]), "Function(Acos)");
+    assert_eq!(format!("{:?}", tokens[10]), "Function(Atan)");
+}
+
+#[test]
+fn test_hyperbolic_functions() {
+    let tokens = check("asinh(x)+ACOSH(x)+atanh(x)");
+
+    assert_eq!(format!("{:?}", tokens[0]), "Function(Asinh)");
+    assert_eq!(format!("{:?}", tokens[5]), "Function(Acosh)");
+    assert_eq!(format!("{:?}", tokens[10]), "Function(Atanh)");
+}

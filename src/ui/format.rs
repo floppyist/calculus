@@ -48,6 +48,7 @@ pub fn format_outcome(outcome: Outcome) -> String {
         Outcome::Value(value) => format!("= {}", format_number(value)),
         Outcome::VariableDefined(name) => format!("{} defined", name),
         Outcome::FunctionDefined(name) => format!("{} defined", name),
+        Outcome::Source(source) => format!("= {}", source),
     }
 }
 

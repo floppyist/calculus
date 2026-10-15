@@ -16,6 +16,7 @@ pub enum Key {
     CtrlC,
     CtrlD,
     CtrlL,
+    CtrlR,
     Escape,
     Unknown,
 }
@@ -71,6 +72,15 @@ impl LineEditor {
         self.reset_history();
     }
 
+    pub fn insert_str(&mut self, text: &str) {
+        for ch in text.chars() {
+            self.chars.insert(self.cursor, ch);
+            self.cursor += 1;
+        }
+
+        self.reset_history();
+    }
+
     pub fn backspace(&mut self) {
         if self.cursor > 0 {
             self.cursor -= 1;
@@ -98,6 +108,15 @@ impl LineEditor {
 
     pub fn home(&mut self) {
         self.cursor = 0;
+    }
+
+    // vi's '^': first non-blank character of the line
+    pub fn first_nonblank(&mut self) {
+        self.cursor = self
+            .chars
+            .iter()
+            .position(|ch| !ch.is_whitespace())
+            .unwrap_or(0);
     }
 
     pub fn end(&mut self) {
@@ -234,6 +253,10 @@ impl KeyReader {
             0x0c => {
                 self.buffer.remove(0);
                 Some(Key::CtrlL)
+            }
+            0x12 => {
+                self.buffer.remove(0);
+                Some(Key::CtrlR)
             }
             _ if first < 0x20 => {
                 self.buffer.remove(0);

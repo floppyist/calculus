@@ -27,6 +27,11 @@ pub struct Layout {
 
 // Distributes the available space; two columns when there is enough room
 pub fn compute(columns: usize, rows: usize) -> Layout {
+    compute_with_side(columns, rows, true)
+}
+
+// Like compute, but can keep the whole content area for the main pane
+pub fn compute_with_side(columns: usize, rows: usize, want_side: bool) -> Layout {
     let input_y = rows.saturating_sub(INPUT_HEIGHT);
     let input = Rect {
         x: 0,
@@ -37,7 +42,19 @@ pub fn compute(columns: usize, rows: usize) -> Layout {
 
     let content_height = input_y;
 
-    let (main, side) = split_content(columns, content_height);
+    let (main, side) = if want_side {
+        split_content(columns, content_height)
+    } else {
+        (
+            Rect {
+                x: 0,
+                y: 0,
+                width: columns,
+                height: content_height,
+            },
+            None,
+        )
+    };
 
     Layout { main, side, input }
 }

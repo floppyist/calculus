@@ -1,5 +1,7 @@
 use core::fmt;
 
+pub mod algebra;
+pub mod command;
 pub mod environment;
 pub mod node;
 pub mod parser;
@@ -86,6 +88,9 @@ pub enum Function {
     Sinh,
     Cosh,
     Tanh,
+    Asinh,
+    Acosh,
+    Atanh,
     // Rounding and sign
     Floor,
     Ceil,
@@ -118,6 +123,9 @@ impl Function {
             Function::Sinh => "sinh",
             Function::Cosh => "cosh",
             Function::Tanh => "tanh",
+            Function::Asinh => "asinh",
+            Function::Acosh => "acosh",
+            Function::Atanh => "atanh",
             Function::Floor => "floor",
             Function::Ceil => "ceil",
             Function::Round => "round",
@@ -161,6 +169,9 @@ impl Function {
             Function::Sinh => args[0].sinh(),
             Function::Cosh => args[0].cosh(),
             Function::Tanh => args[0].tanh(),
+            Function::Asinh => args[0].asinh(),
+            Function::Acosh => args[0].acosh(),
+            Function::Atanh => args[0].atanh(),
             Function::Floor => args[0].floor(),
             Function::Ceil => args[0].ceil(),
             Function::Round => match args {

@@ -122,6 +122,29 @@ fn test_editor_word_motions() {
 }
 
 #[test]
+fn test_editor_first_nonblank() {
+    let mut editor = LineEditor::new();
+
+    for ch in "  ab".chars() {
+        editor.insert(ch);
+    }
+
+    editor.home();
+    editor.first_nonblank();
+    assert_eq!(editor.cursor(), 2);
+
+    let mut blank = LineEditor::new();
+
+    for ch in "   ".chars() {
+        blank.insert(ch);
+    }
+
+    blank.home();
+    blank.first_nonblank();
+    assert_eq!(blank.cursor(), 0);
+}
+
+#[test]
 fn test_editor_delete_to_end_and_clamp() {
     let mut editor = LineEditor::new();
 
@@ -140,4 +163,24 @@ fn test_editor_delete_to_end_and_clamp() {
     editor.clamp_normal();
 
     assert_eq!(editor.cursor(), 1);
+}
+
+#[test]
+fn test_key_reader_ctrl_r() {
+    let mut reader = KeyReader::new();
+
+    reader.feed(&[0x12]);
+
+    assert_eq!(reader.next_key(), Some(Key::CtrlR));
+}
+
+#[test]
+fn test_editor_insert_str() {
+    let mut editor = LineEditor::new();
+
+    editor.insert('2');
+    editor.insert_str("+x");
+
+    assert_eq!(editor.text(), "2+x");
+    assert_eq!(editor.cursor(), 3);
 }

@@ -1,4 +1,8 @@
+pub mod algebra;
+pub mod app;
 pub mod canvas;
+pub mod clipboard;
+pub mod command;
 pub mod environment;
 pub mod format;
 pub mod input;

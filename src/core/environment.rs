@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use crate::core::Token;
+use crate::core::algebra;
 use crate::core::node::{EvalContext, Node};
 use crate::core::parser::{ParseError, generate_ast};
 use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side};
@@ -26,6 +27,9 @@ pub enum EvalError {
     FunctionNotDefined(String),
     WrongArgumentCount(String),
     CyclicDependency,
+    NotDifferentiable,
+    NotIntegrable,
+    NotInvertible,
 }
 
 impl fmt::Display for EvalError {
@@ -48,6 +52,15 @@ impl fmt::Display for EvalError {
                 )
             }
             EvalError::CyclicDependency => write!(f, "[ERROR]: Cyclic variable dependency"),
+            EvalError::NotDifferentiable => {
+                write!(f, "[ERROR]: Expression can not be differentiated")
+            }
+            EvalError::NotIntegrable => {
+                write!(f, "[ERROR]: No symbolic antiderivative found")
+            }
+            EvalError::NotInvertible => {
+                write!(f, "[ERROR]: Expression has no known inverse")
+            }
         }
     }
 }
@@ -69,6 +82,14 @@ pub enum Outcome {
     Value(f64),
     VariableDefined(char),
     FunctionDefined(String),
+    Source(String),
+}
+
+// Result of an integration: a new function or a definite value
+#[derive(Debug)]
+pub enum IntegralOutcome {
+    Function { name: String, source: String },
+    Value(f64),
 }
 
 // Target of an assignment
@@ -208,6 +229,123 @@ impl Environment {
         self.parse_and_validate(expression, &[])
     }
 
+    // Simplified source text of an expression
+    pub fn simplify(&self, expression: &str) -> Result<String, EvalError> {
+        let ast = self.parse_and_validate(expression, &[])?;
+
+        Ok(algebra::to_source(&algebra::simplify(&ast)))
+    }
+
+    // Differentiates an expression and stores it as a new one-parameter function
+    pub fn differentiate(&mut self, expression: &str) -> Result<(String, String), EvalError> {
+        let ast = algebra::simplify(&self.parse_and_validate(expression, &[])?);
+        let functions = self.function_map();
+        let derivative =
+            algebra::differentiate(&ast, 'x', &functions).ok_or(EvalError::NotDifferentiable)?;
+        let simplified = algebra::simplify(&derivative);
+
+        Ok(self.define_function(&simplified))
+    }
+
+    // Integrates an expression; bounds make it definite, otherwise a function is stored
+    pub fn integrate(
+        &mut self,
+        expression: &str,
+        bounds: Option<(&str, &str)>,
+    ) -> Result<IntegralOutcome, EvalError> {
+        let ast = algebra::simplify(&self.parse_and_validate(expression, &[])?);
+
+        match bounds {
+            None => {
+                let antiderivative =
+                    algebra::integrate(&ast, 'x').ok_or(EvalError::NotIntegrable)?;
+                let simplified = algebra::simplify(&antiderivative);
+                let (name, source) = self.define_function(&simplified);
+
+                Ok(IntegralOutcome::Function { name, source })
+            }
+
+            Some((lower, upper)) => {
+                let lower = self.evaluate_constant(lower)?;
+                let upper = self.evaluate_constant(upper)?;
+
+                let value = match algebra::integrate(&ast, 'x') {
+                    Some(antiderivative) => {
+                        let simplified = algebra::simplify(&antiderivative);
+
+                        self.evaluate_at(&simplified, 'x', upper)
+                            - self.evaluate_at(&simplified, 'x', lower)
+                    }
+                    None => self.simpson(&ast, lower, upper),
+                };
+
+                Ok(IntegralOutcome::Value(value))
+            }
+        }
+    }
+
+    // Stores a single-variable expression as a new auto-named function
+    fn define_function(&mut self, body: &Node) -> (String, String) {
+        let source = algebra::to_source(body);
+        let name = self.next_function_name();
+
+        self.functions.insert(
+            name.clone(),
+            Definition {
+                source: source.clone(),
+                params: vec!['x'],
+                body: body.clone(),
+            },
+        );
+
+        let _ = self.recompute();
+
+        (name, source)
+    }
+
+    // Evaluates a constant expression using the current variable values
+    fn evaluate_constant(&self, expression: &str) -> Result<f64, EvalError> {
+        let ast = self.parse_and_validate(expression, &[])?;
+
+        if let Some(name) = self.unknown_variable(&ast) {
+            return Err(EvalError::UnknownVariable(name));
+        }
+
+        Ok(self.evaluate_at(&ast, 'x', 0.0))
+    }
+
+    // Evaluates an expression with one variable bound to a value
+    fn evaluate_at(&self, node: &Node, name: char, value: f64) -> f64 {
+        let functions = self.function_map();
+        let mut variables = self.values.clone();
+
+        variables.insert(name, value);
+
+        let ctx = EvalContext {
+            variables: &variables,
+            functions: &functions,
+            depth: 0,
+        };
+
+        node.evaluate(&ctx)
+    }
+
+    // Composite Simpson rule, used when no antiderivative is available
+    fn simpson(&self, node: &Node, lower: f64, upper: f64) -> f64 {
+        let steps = 1000;
+        let width = (upper - lower) / steps as f64;
+        let mut total = self.evaluate_at(node, 'x', lower) + self.evaluate_at(node, 'x', upper);
+
+        for index in 1..steps {
+            let sample = lower + width * index as f64;
+            let weight = if index % 2 == 1 { 4.0 } else { 2.0 };
+
+            total += weight * self.evaluate_at(node, 'x', sample);
+        }
+
+        total * width / 3.0
+    }
+
     pub fn execute(&mut self, raw_input: &str) -> Result<Outcome, EvalError> {
         let input = raw_input.trim();
 
@@ -231,6 +369,10 @@ impl Environment {
         let ast = self.parse_and_validate(expression, &[])?;
 
         if let Some(name) = self.unknown_variable(&ast) {
+            if let Some(source) = self.inverse_source(expression)? {
+                return Ok(Outcome::Source(source));
+            }
+
             return Err(EvalError::UnknownVariable(name));
         }
 
@@ -242,6 +384,50 @@ impl Environment {
         };
 
         Ok(Outcome::Value(ast.evaluate(&ctx)))
+    }
+
+    // Symbolic inverse of a bare call(v)^-1, printed with the variable y
+    fn inverse_source(&self, expression: &str) -> Result<Option<String>, EvalError> {
+        let ast = self.parse_ast(expression, &[])?;
+        let Node::Pow(base, exponent) = &ast else {
+            return Ok(None);
+        };
+
+        if !is_invers_exponent(exponent) {
+            return Ok(None);
+        }
+
+        let functions = self.function_map();
+        let inverted = match base.as_ref() {
+            Node::Builtin(function, arguments) => match arguments.as_slice() {
+                [Node::Variable(variable)] => {
+                    algebra::builtin_inverse(*function, arguments[0].clone())
+                        .map(|node| (node, *variable))
+                }
+                _ => None,
+            },
+            Node::Call(name, arguments) => match arguments.as_slice() {
+                [Node::Variable(variable)] => functions.get(name).and_then(|(parameters, body)| {
+                    parameters.first().and_then(|param| {
+                        algebra::user_inverse(body, *param, arguments[0].clone())
+                            .map(|node| (node, *variable))
+                    })
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let Some((inverted, variable)) = inverted else {
+            return Ok(None);
+        };
+
+        let mut replacements = HashMap::new();
+        replacements.insert(variable, Node::Variable('y'));
+
+        Ok(Some(algebra::to_source(&algebra::simplify(
+            &algebra::substitute(&inverted, &replacements),
+        ))))
     }
 
     // First free variable of the expression that is not defined, if any
@@ -310,10 +496,14 @@ impl Environment {
                 // Own name is known while parsing the body (recursion)
                 let body = self.parse_and_validate(expression, &[(name.clone(), params.len())])?;
 
+                // Store the compact form so every display shows the same source
+                let body = algebra::simplify(&body);
+                let source = algebra::to_source(&body);
+
                 self.functions.insert(
                     name.clone(),
                     Definition {
-                        source: expression.to_string(),
+                        source,
                         params,
                         body,
                     },
@@ -328,6 +518,17 @@ impl Environment {
 
     // Tokenizes and parses an expression and validates all function calls
     fn parse_and_validate(
+        &self,
+        expression: &str,
+        extra_functions: &[(String, usize)],
+    ) -> Result<Node, EvalError> {
+        let ast = self.parse_ast(expression, extra_functions)?;
+
+        rewrite_inverses(&ast, &self.function_map())
+    }
+
+    // Tokenize, parse and validate without rewriting inverse powers
+    fn parse_ast(
         &self,
         expression: &str,
         extra_functions: &[(String, usize)],
@@ -521,6 +722,100 @@ fn parse_function_signature(tokens: &[Token]) -> Option<Target> {
         Some(Target::Function(name, params))
     } else {
         None
+    }
+}
+
+// Rewrites call(x)^-1 into the inverse function; x^-1 keeps meaning 1/x
+fn rewrite_inverses(
+    node: &Node,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+) -> Result<Node, EvalError> {
+    match node {
+        Node::IntNumber(_) | Node::FloatNumber(_) | Node::Variable(_) => Ok(node.clone()),
+
+        Node::Neg(inner) => Ok(Node::Neg(Box::new(rewrite_inverses(inner, functions)?))),
+
+        Node::Add(left, right) => Ok(Node::Add(
+            Box::new(rewrite_inverses(left, functions)?),
+            Box::new(rewrite_inverses(right, functions)?),
+        )),
+        Node::Sub(left, right) => Ok(Node::Sub(
+            Box::new(rewrite_inverses(left, functions)?),
+            Box::new(rewrite_inverses(right, functions)?),
+        )),
+        Node::Mul(left, right) => Ok(Node::Mul(
+            Box::new(rewrite_inverses(left, functions)?),
+            Box::new(rewrite_inverses(right, functions)?),
+        )),
+        Node::Div(left, right) => Ok(Node::Div(
+            Box::new(rewrite_inverses(left, functions)?),
+            Box::new(rewrite_inverses(right, functions)?),
+        )),
+
+        Node::Pow(base, exponent) => {
+            let base = rewrite_inverses(base, functions)?;
+
+            if is_invers_exponent(exponent) {
+                return match &base {
+                    Node::Builtin(function, arguments) if arguments.len() == 1 => {
+                        algebra::builtin_inverse(*function, arguments[0].clone())
+                            .ok_or(EvalError::NotInvertible)
+                    }
+                    Node::Call(name, arguments) if arguments.len() == 1 => {
+                        let Some((parameters, body)) = functions.get(name) else {
+                            return Err(EvalError::NotInvertible);
+                        };
+                        let Some(&param) = parameters.first() else {
+                            return Err(EvalError::NotInvertible);
+                        };
+
+                        algebra::user_inverse(body, param, arguments[0].clone())
+                            .ok_or(EvalError::NotInvertible)
+                    }
+                    Node::Builtin(..) | Node::Call(..) => Err(EvalError::NotInvertible),
+                    _ => Ok(Node::Pow(
+                        Box::new(base),
+                        Box::new(Node::Neg(Box::new(Node::IntNumber(1)))),
+                    )),
+                };
+            }
+
+            Ok(Node::Pow(
+                Box::new(base),
+                Box::new(rewrite_inverses(exponent, functions)?),
+            ))
+        }
+
+        Node::Builtin(function, arguments) => {
+            let rewritten: Result<Vec<Node>, EvalError> = arguments
+                .iter()
+                .map(|argument| rewrite_inverses(argument, functions))
+                .collect();
+
+            Ok(Node::Builtin(*function, rewritten?))
+        }
+        Node::Call(name, arguments) => {
+            let rewritten: Result<Vec<Node>, EvalError> = arguments
+                .iter()
+                .map(|argument| rewrite_inverses(argument, functions))
+                .collect();
+
+            Ok(Node::Call(name.clone(), rewritten?))
+        }
+    }
+}
+
+// True for an exponent that denotes the inverse function: ^-1
+fn is_invers_exponent(node: &Node) -> bool {
+    match node {
+        Node::Neg(inner) => match inner.as_ref() {
+            Node::IntNumber(value) => *value == 1,
+            Node::FloatNumber(value) => *value == 1.0,
+            _ => false,
+        },
+        Node::IntNumber(value) => *value == -1,
+        Node::FloatNumber(value) => *value == -1.0,
+        _ => false,
     }
 }
 

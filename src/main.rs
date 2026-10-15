@@ -5,7 +5,8 @@ mod core;
 mod tests;
 mod ui;
 
-use core::environment::{Definition, Environment};
+use core::command::{self, Command};
+use core::environment::{Definition, Environment, IntegralOutcome};
 use ui::app::App;
 use ui::format::{format_number, format_outcome};
 use ui::term::Terminal;
@@ -58,31 +59,62 @@ fn run_plain() -> io::Result<()> {
             continue;
         }
 
-        if line == "quit" || line == "exit" {
-            break;
-        }
-
-        if let Some(rest) = ui::plot_target(line) {
-            match environment.expression(rest) {
-                Ok(node) => {
-                    let (columns, rows) = terminal_size();
-                    let width = columns.clamp(20, 400);
-                    let height = rows.saturating_sub(4).clamp(5, 100);
-
-                    let functions = environment.function_map();
-                    let samples = core::plot::sample_curve(
-                        &node,
-                        &functions,
-                        environment.values(),
-                        width * 2,
-                    );
-                    let lines = core::plot::render(&[(rest, samples.as_slice())], width, height);
-
-                    for line in lines {
-                        writeln!(stdout, "{}", line)?;
+        if let Some(command) = command::parse_command(line) {
+            match command {
+                Command::Quit => break,
+                Command::Plot(rest) => {
+                    if rest.is_empty() {
+                        writeln!(stdout, "[ERROR]: plot needs an expression")?;
+                    } else {
+                        draw_plot(&environment, &rest, &mut stdout)?;
                     }
                 }
-                Err(error) => writeln!(stdout, "{}", error)?,
+                Command::Help => {
+                    writeln!(stdout, "Help is only available in interactive mode")?;
+                }
+                Command::ClearVariables => {
+                    environment.clear_variables();
+                    writeln!(stdout, "variables cleared")?;
+                }
+                Command::ClearFunctions => {
+                    environment.clear_functions();
+                    writeln!(stdout, "functions cleared")?;
+                }
+                Command::ClearAll => {
+                    environment.clear_variables();
+                    environment.clear_functions();
+                    writeln!(stdout, "cleared all")?;
+                }
+                Command::ClearOutput
+                | Command::ClearPlots
+                | Command::ClearHistory
+                | Command::Scales(_) => {}
+                Command::Simplify(expression) => match environment.simplify(&expression) {
+                    Ok(source) => writeln!(stdout, "= {}", source)?,
+                    Err(error) => writeln!(stdout, "{}", error)?,
+                },
+                Command::Differentiate(expression) => {
+                    match environment.differentiate(&expression) {
+                        Ok((name, source)) => writeln!(stdout, "{}(x) = {}", name, source)?,
+                        Err(error) => writeln!(stdout, "{}", error)?,
+                    }
+                }
+                Command::Integrate { expression, bounds } => {
+                    let bounds = bounds
+                        .as_ref()
+                        .map(|(lower, upper)| (lower.as_str(), upper.as_str()));
+
+                    match environment.integrate(&expression, bounds) {
+                        Ok(IntegralOutcome::Function { name, source }) => {
+                            writeln!(stdout, "{}(x) = {}   (+ C)", name, source)?;
+                        }
+                        Ok(IntegralOutcome::Value(value)) => {
+                            writeln!(stdout, "= {}", format_number(value))?;
+                        }
+                        Err(error) => writeln!(stdout, "{}", error)?,
+                    }
+                }
+                Command::Error(message) => writeln!(stdout, "{}", message)?,
             }
 
             continue;
@@ -94,6 +126,29 @@ fn run_plain() -> io::Result<()> {
         }
 
         draw_status(&environment, &mut stdout)?;
+    }
+
+    Ok(())
+}
+
+// Renders a curve to the terminal in plain mode
+fn draw_plot(environment: &Environment, expression: &str, out: &mut impl Write) -> io::Result<()> {
+    match environment.expression(expression) {
+        Ok(node) => {
+            let (columns, rows) = terminal_size();
+            let width = columns.clamp(20, 400);
+            let height = rows.saturating_sub(4).clamp(5, 100);
+
+            let functions = environment.function_map();
+            let samples =
+                core::plot::sample_curve(&node, &functions, environment.values(), width * 2);
+            let lines = core::plot::render(&[(expression, samples.as_slice())], width, height);
+
+            for line in lines {
+                writeln!(out, "{}", line)?;
+            }
+        }
+        Err(error) => writeln!(out, "{}", error)?,
     }
 
     Ok(())

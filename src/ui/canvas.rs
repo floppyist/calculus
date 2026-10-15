@@ -229,7 +229,7 @@ impl Canvas {
             0
         };
 
-        cell.ch = char::from_u32(BRAILLE_BASE + bits | DOT_BITS[dot_col][dot_row]).unwrap_or(' ');
+        cell.ch = char::from_u32((BRAILLE_BASE + bits) | DOT_BITS[dot_col][dot_row]).unwrap_or(' ');
         cell.style = style;
     }
 

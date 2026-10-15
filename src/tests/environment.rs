@@ -194,7 +194,7 @@ fn test_definitions_round_trip() {
     environment.execute("f(x)=3*x^3").unwrap();
 
     assert_eq!(environment.variable_definitions(), vec!["x = 3"]);
-    assert_eq!(environment.function_definitions(), vec!["f(x) = 3*x^3"]);
+    assert_eq!(environment.function_definitions(), vec!["f(x) = 3x^3"]);
 }
 
 fn eval(environment: &mut Environment, expression: &str) -> f64 {
@@ -254,7 +254,7 @@ fn test_builtin_math_functions() {
     assert_eq!(eval(&mut environment, "floor(-1.5)"), -2.0);
     assert_eq!(eval(&mut environment, "ceil(1.2)"), 2.0);
     assert_eq!(eval(&mut environment, "round(2.5)"), 3.0);
-    assert_eq!(eval(&mut environment, "round(3.14159,2)"), 3.14);
+    assert_eq!(eval(&mut environment, "round(3.14159,2)"), 314.0 / 100.0);
     assert_eq!(eval(&mut environment, "trunc(-1.9)"), -1.0);
     assert_eq!(eval(&mut environment, "sign(-4)"), -1.0);
     assert_eq!(eval(&mut environment, "min(3,7)"), 3.0);
@@ -298,5 +298,19 @@ fn test_digit_function_names() {
     assert_eq!(
         eval(&mut environment, "atan2(1,1)"),
         std::f64::consts::FRAC_PI_4
+    );
+}
+
+#[test]
+fn test_function_source_is_canonical() {
+    let mut environment = Environment::new();
+
+    environment.execute("n=1").unwrap();
+    environment.execute("g(x)=3*x+4*n^x").unwrap();
+    environment.execute("h(x)=g(x)+2*(x+1)").unwrap();
+
+    assert_eq!(
+        environment.function_definitions(),
+        vec!["g(x) = 3x + 4n^x", "h(x) = g(x) + 2(x + 1)"]
     );
 }
