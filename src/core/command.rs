@@ -5,7 +5,10 @@ pub enum Command {
     Quit,
     Plot(String),
     Scales(Option<bool>),
+    Show(PaneArg),
+    Hide(PaneArg),
     ClearOutput,
+    ClearInfo,
     ClearPlots,
     ClearVariables,
     ClearFunctions,
@@ -13,11 +16,27 @@ pub enum Command {
     ClearHistory,
     Simplify(String),
     Differentiate(String),
+    Print(String),
     Integrate {
         expression: String,
+        variable: Option<String>,
         bounds: Option<(String, String)>,
     },
+    Solve {
+        equation: String,
+        variable: String,
+    },
     Error(String),
+}
+
+// A pane or overlay toggled by show / hide
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneArg {
+    Plot,
+    Variables,
+    Functions,
+    Info,
+    All,
 }
 
 // Recognizes a command line; None means the input is an expression or assignment
@@ -56,6 +75,10 @@ pub fn parse_command(input: &str) -> Option<Command> {
         return Some(Command::ClearOutput);
     }
 
+    if trimmed == "clear info" {
+        return Some(Command::ClearInfo);
+    }
+
     if trimmed == "clear vars" {
         return Some(Command::ClearVariables);
     }
@@ -76,12 +99,30 @@ pub fn parse_command(input: &str) -> Option<Command> {
         return Some(Command::ClearHistory);
     }
 
+    if let Some(rest) = keyword_argument(trimmed, &["show"]) {
+        return Some(match pane_argument(rest) {
+            Some(pane) => Command::Show(pane),
+            None => Command::Error(format!("[ERROR]: unknown pane '{}'", rest)),
+        });
+    }
+
+    if let Some(rest) = keyword_argument(trimmed, &["hide"]) {
+        return Some(match pane_argument(rest) {
+            Some(pane) => Command::Hide(pane),
+            None => Command::Error(format!("[ERROR]: unknown pane '{}'", rest)),
+        });
+    }
+
     if let Some(rest) = keyword_argument(trimmed, &["simplify", "simp"]) {
         return Some(Command::Simplify(rest.to_string()));
     }
 
     if let Some(rest) = keyword_argument(trimmed, &["diff", "derive", "derivative"]) {
         return Some(Command::Differentiate(rest.to_string()));
+    }
+
+    if let Some(rest) = keyword_argument(trimmed, &["print"]) {
+        return Some(Command::Print(rest.to_string()));
     }
 
     if let Some(rest) = keyword_argument(trimmed, &["integrate", "integral", "int"]) {
@@ -93,15 +134,45 @@ pub fn parse_command(input: &str) -> Option<Command> {
         return Some(match parts.as_slice() {
             [expression] => Command::Integrate {
                 expression: expression.clone(),
+                variable: None,
+                bounds: None,
+            },
+            [expression, variable] => Command::Integrate {
+                expression: expression.clone(),
+                variable: Some(variable.clone()),
                 bounds: None,
             },
             [expression, lower, upper] => Command::Integrate {
                 expression: expression.clone(),
+                variable: None,
+                bounds: Some((lower.clone(), upper.clone())),
+            },
+            [expression, variable, lower, upper] => Command::Integrate {
+                expression: expression.clone(),
+                variable: Some(variable.clone()),
                 bounds: Some((lower.clone(), upper.clone())),
             },
             _ => Command::Error(
-                "[ERROR]: integrate expects '<expr>' or '<expr>, <a>, <b>'".to_string(),
+                "[ERROR]: integrate expects '<expr>', '<expr>, <var>' or '<expr>, <a>, <b>'"
+                    .to_string(),
             ),
+        });
+    }
+
+    if let Some(rest) = keyword_argument(trimmed, &["solve"]) {
+        let parts: Vec<String> = split_top_level(rest, ',')
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .collect();
+
+        return Some(match parts.as_slice() {
+            [equation, variable] if !equation.is_empty() && !variable.is_empty() => {
+                Command::Solve {
+                    equation: equation.clone(),
+                    variable: variable.clone(),
+                }
+            }
+            _ => Command::Error("[ERROR]: solve expects '<equation>, <variable>'".to_string()),
         });
     }
 
@@ -123,6 +194,18 @@ fn keyword_argument<'a>(input: &'a str, keywords: &[&str]) -> Option<&'a str> {
     }
 
     None
+}
+
+// Maps a show / hide target word to the pane it refers to
+fn pane_argument(word: &str) -> Option<PaneArg> {
+    match word {
+        "plot" | "plots" => Some(PaneArg::Plot),
+        "vars" | "variables" => Some(PaneArg::Variables),
+        "funcs" | "functions" => Some(PaneArg::Functions),
+        "info" => Some(PaneArg::Info),
+        "all" => Some(PaneArg::All),
+        _ => None,
+    }
 }
 
 // Splits on a separator that is not nested inside parentheses

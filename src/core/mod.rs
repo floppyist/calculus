@@ -6,6 +6,7 @@ pub mod environment;
 pub mod node;
 pub mod parser;
 pub mod plot;
+pub mod rational;
 pub mod tokenizer;
 
 #[derive(Debug, Clone)]

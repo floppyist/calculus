@@ -166,12 +166,12 @@ fn test_editor_delete_to_end_and_clamp() {
 }
 
 #[test]
-fn test_key_reader_ctrl_r() {
+fn test_key_reader_ctrl_r_is_unknown() {
     let mut reader = KeyReader::new();
 
     reader.feed(&[0x12]);
 
-    assert_eq!(reader.next_key(), Some(Key::CtrlR));
+    assert_eq!(reader.next_key(), Some(Key::Unknown));
 }
 
 #[test]

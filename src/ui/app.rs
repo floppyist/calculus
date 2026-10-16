@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
-use crate::core::command::{self, Command};
-use crate::core::environment::{Environment, IntegralOutcome};
+use crate::core::command::{self, Command, PaneArg};
+use crate::core::environment::{Environment, IntegralOutcome, PrintTarget};
 use crate::core::node::Node;
 use crate::core::plot;
 use crate::ui::canvas::{Canvas, Color, Style};
@@ -62,7 +62,10 @@ const HELP_LINES: &[&str] = &[
     "  simp <expr>               rewrite an expression in a compact form",
     "  diff <expr>               derivative d/dx, stored as a new function",
     "  int <expr>                antiderivative (+ C), stored as a function",
+    "  int <expr>, y             integrate with respect to y",
     "  int <expr>, a, b          definite integral from a to b",
+    "  solve <eq>, x             solve an equation for x",
+    "  print <name | expr>       print a function, variable or expression",
     "",
     "Plotting",
     "  plot sin(x), cos(x)       define & plot, auto named f, g, ...",
@@ -71,11 +74,13 @@ const HELP_LINES: &[&str] = &[
     "",
     "Definitions",
     "  clear                     clear the output",
+    "  clear info                remove info and echo lines",
     "  clear vars                remove all variables",
     "  clear funcs               remove all functions",
     "  clear plots               remove all curves",
     "  clear all                 wipe the session and the state file",
     "  clear history             forget the input history",
+    "  show / hide <pane>        panes: plot, vars, funcs, info, all",
     "",
     "Editing (vi mode, Esc = normal)",
     "  h l 0 ^ $ w b             move / start / blank / end / word",
@@ -94,7 +99,7 @@ const HELP_LINES: &[&str] = &[
     "  Tab                       focus input / variables / functions / output",
     "  Ctrl-C                    clear the input",
     "  Ctrl-D                    quit",
-    "  Ctrl-R                    paste from the clipboard",
+    "  p                         paste from the clipboard (normal mode)",
     "  ?                         show this help",
 ];
 
@@ -123,6 +128,7 @@ struct Curve {
 enum Kind {
     Result,
     Info,
+    Echo,
 }
 
 struct OutputLine {
@@ -317,7 +323,7 @@ impl App {
 
         self.draw_input(&mut canvas, &layout);
 
-        canvas.to_string()
+        canvas.render()
     }
 
     fn draw_help(&self, canvas: &mut Canvas, rect: Rect) {
@@ -567,7 +573,7 @@ impl App {
         let mut wrapped: Vec<(Option<String>, String, usize, usize)> = Vec::new();
 
         for (line_index, line) in self.output.iter().enumerate() {
-            if self.hide_info && line.kind == Kind::Info {
+            if self.hide_info && line.kind != Kind::Result {
                 continue;
             }
 
@@ -855,6 +861,7 @@ impl App {
     }
 
     // Tick labels in the left gutter (y) and the bottom row (x)
+    #[allow(clippy::too_many_arguments)]
     fn draw_scales(
         &self,
         canvas: &mut Canvas,
@@ -1073,47 +1080,26 @@ impl App {
             };
             let cursor = (focused && range.is_none() && index == selection).then_some(0);
 
-            let fits = base.chars().count() + preview.chars().count() + 2 <= inner.width;
+            print_side_row(
+                canvas,
+                inner.x as isize,
+                inner.y as isize + row as isize,
+                inner.width,
+                &base,
+                style,
+                cursor,
+            );
+            row += 1;
 
-            if preview.is_empty() || fits {
-                let text = if preview.is_empty() {
-                    base.clone()
-                } else {
-                    format!("{}  {}", base, preview)
-                };
-
-                print_side_row(
-                    canvas,
-                    inner.x as isize,
+            if !preview.is_empty() && row < view {
+                canvas.print_clipped(
+                    inner.x as isize + 2,
                     inner.y as isize + row as isize,
-                    inner.width,
-                    &text,
-                    style,
-                    cursor,
+                    inner.width.saturating_sub(2),
+                    &preview,
+                    hint_style(),
                 );
                 row += 1;
-            } else {
-                print_side_row(
-                    canvas,
-                    inner.x as isize,
-                    inner.y as isize + row as isize,
-                    inner.width,
-                    &base,
-                    style,
-                    cursor,
-                );
-                row += 1;
-
-                if row < view {
-                    canvas.print_clipped(
-                        inner.x as isize,
-                        inner.y as isize + row as isize,
-                        inner.width,
-                        &preview,
-                        hint_style(),
-                    );
-                    row += 1;
-                }
             }
         }
     }
@@ -1197,7 +1183,6 @@ impl App {
             Key::Down => self.editor.history_next(),
             Key::PageUp => self.scroll = self.scroll.saturating_add(5),
             Key::PageDown => self.scroll = self.scroll.saturating_sub(5),
-            Key::CtrlR => {}
             Key::CtrlL => {}
             Key::CtrlC => {
                 self.editor.clear();
@@ -1813,27 +1798,21 @@ impl App {
     }
 
     // The plain text shown for one sidebar row, without the plot marker
-    fn side_line_text(&self, index: usize) -> Option<String> {
+    fn side_value_text(&self, index: usize) -> Option<String> {
         match self.focus {
             Focus::Variables => {
                 let names = self.variable_names();
                 let name = names.get(index)?;
                 let value = self.environment.values().get(name).copied().unwrap_or(0.0);
 
-                Some(format!("{} = {}", name, format_number(value)))
+                Some(format_number(value))
             }
             Focus::Functions => {
                 let names = self.function_names();
                 let name = names.get(index)?;
                 let definition = self.environment.functions().get(name)?;
-                let params: String = definition
-                    .params
-                    .iter()
-                    .map(|param| param.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
 
-                Some(format!("{}({}) = {}", name, params, definition.source))
+                Some(definition.source.clone())
             }
             Focus::Input | Focus::Output => None,
         }
@@ -1848,7 +1827,7 @@ impl App {
 
         let index = (*self.current_selection()).min(total - 1);
 
-        if let Some(text) = self.side_line_text(index) {
+        if let Some(text) = self.side_value_text(index) {
             self.copy_to_clipboard(text);
         }
     }
@@ -1862,7 +1841,7 @@ impl App {
         let mut rows = Vec::new();
 
         for index in begin..=end {
-            if let Some(text) = self.side_line_text(index) {
+            if let Some(text) = self.side_value_text(index) {
                 rows.push(text);
             }
         }
@@ -1922,6 +1901,20 @@ impl App {
 
     fn functions_visible(&self) -> bool {
         self.show_funcs && !self.environment.functions().is_empty()
+    }
+
+    fn ensure_focus_valid(&mut self) {
+        let valid = match self.focus {
+            Focus::Variables => self.variables_visible(),
+            Focus::Functions => self.functions_visible(),
+            Focus::Input | Focus::Output => true,
+        };
+
+        if !valid {
+            self.focus = Focus::Input;
+            self.input_mode = InputMode::Insert;
+            self.side_visual = None;
+        }
     }
 
     fn side_visible(&self) -> bool {
@@ -2095,7 +2088,7 @@ impl App {
             return;
         }
 
-        self.push_output(hint_style(), format!("> {}", trimmed));
+        self.push_echo(hint_style(), format!("> {}", trimmed));
 
         if let Some(command) = command::parse_command(&trimmed) {
             self.run_command(command);
@@ -2128,8 +2121,19 @@ impl App {
                 self.command_scales(value);
                 self.persist();
             }
+            Command::Show(pane) => {
+                self.command_show_hide(pane, true);
+                self.persist();
+            }
+            Command::Hide(pane) => {
+                self.command_show_hide(pane, false);
+                self.persist();
+            }
             Command::ClearOutput => {
                 self.command_clear_output();
+            }
+            Command::ClearInfo => {
+                self.command_clear_info();
             }
             Command::ClearPlots => {
                 self.curves.clear();
@@ -2154,8 +2158,17 @@ impl App {
                 self.command_differentiate(&expression);
                 self.persist();
             }
-            Command::Integrate { expression, bounds } => {
-                self.command_integrate(&expression, bounds);
+            Command::Print(argument) => self.command_print(&argument),
+            Command::Integrate {
+                expression,
+                variable,
+                bounds,
+            } => {
+                self.command_integrate(&expression, variable.as_deref(), bounds);
+                self.persist();
+            }
+            Command::Solve { equation, variable } => {
+                self.command_solve(&equation, &variable);
                 self.persist();
             }
             Command::Error(message) => self.push_info(error_style(), message),
@@ -2178,17 +2191,107 @@ impl App {
         }
     }
 
-    fn command_integrate(&mut self, expression: &str, bounds: Option<(String, String)>) {
+    fn command_print(&mut self, argument: &str) {
+        if argument.trim().is_empty() {
+            self.push_info(
+                error_style(),
+                "usage: print <function|variable|expression>".to_string(),
+            );
+            return;
+        }
+
+        match self.environment.print_target(argument) {
+            Ok(PrintTarget::Function {
+                name,
+                params,
+                source,
+            }) => {
+                let params: String = params
+                    .iter()
+                    .map(|param| param.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+
+                self.push_output(result_style(), format!("{}({}) = {}", name, params, source));
+            }
+            Ok(PrintTarget::Variable { name, value }) => {
+                self.push_output(
+                    result_style(),
+                    format!("{} = {}", name, format_number(value)),
+                );
+            }
+            Ok(PrintTarget::Expression(outcome)) => {
+                self.push_output(result_style(), format_outcome(outcome));
+            }
+            Err(error) => self.push_info(error_style(), format!("{}", error)),
+        }
+    }
+
+    fn command_integrate(
+        &mut self,
+        expression: &str,
+        variable: Option<&str>,
+        bounds: Option<(String, String)>,
+    ) {
+        let variable = match variable {
+            Some(name) => match single_variable(name.trim()) {
+                Some(name) => Some(name),
+                None => {
+                    self.push_info(
+                        error_style(),
+                        format!("[ERROR]: unknown integration variable '{}'", name),
+                    );
+                    return;
+                }
+            },
+            None => None,
+        };
+
         let bounds = bounds
             .as_ref()
             .map(|(lower, upper)| (lower.as_str(), upper.as_str()));
 
-        match self.environment.integrate(expression, bounds) {
-            Ok(IntegralOutcome::Function { name, source }) => {
-                self.push_output(result_style(), format!("{}(x) = {} (+ C)", name, source));
+        match self.environment.integrate(expression, bounds, variable) {
+            Ok(IntegralOutcome::Function {
+                name,
+                param,
+                source,
+            }) => {
+                self.push_output(
+                    result_style(),
+                    format!("{}({}) = {} (+ C)", name, param, source),
+                );
             }
             Ok(IntegralOutcome::Value(value)) => {
                 self.push_output(result_style(), format!("= {}", format_number(value)));
+            }
+            Err(error) => self.push_info(error_style(), format!("{}", error)),
+        }
+    }
+
+    fn command_solve(&mut self, equation: &str, variable: &str) {
+        let variable = match single_variable(variable.trim()) {
+            Some(name) => name,
+            None => {
+                self.push_info(
+                    error_style(),
+                    format!("[ERROR]: unknown solve variable '{}'", variable.trim()),
+                );
+                return;
+            }
+        };
+
+        match self.environment.solve(equation, variable) {
+            Ok(outcome) if outcome.solutions.is_empty() => {
+                self.push_output(result_style(), "no real solutions".to_string());
+            }
+            Ok(outcome) => {
+                for solution in outcome.solutions {
+                    self.push_output(
+                        result_style(),
+                        format!("{} = {}", outcome.variable, solution),
+                    );
+                }
             }
             Err(error) => self.push_info(error_style(), format!("{}", error)),
         }
@@ -2233,6 +2336,26 @@ impl App {
 
     fn command_clear_output(&mut self) {
         self.output.clear();
+    }
+
+    fn command_clear_info(&mut self) {
+        self.output.retain(|line| line.kind == Kind::Result);
+    }
+
+    fn command_show_hide(&mut self, pane: PaneArg, show: bool) {
+        match pane {
+            PaneArg::Plot => self.show_plot = show,
+            PaneArg::Variables => self.show_vars = show,
+            PaneArg::Functions => self.show_funcs = show,
+            PaneArg::Info => self.hide_info = !show,
+            PaneArg::All => {
+                self.show_plot = show;
+                self.show_vars = show;
+                self.show_funcs = show;
+            }
+        }
+
+        self.ensure_focus_valid();
     }
 
     fn command_clear_history(&mut self) {
@@ -2348,6 +2471,10 @@ impl App {
 
     fn push_info(&mut self, style: Style, text: String) {
         self.push_line(style, text, Kind::Info);
+    }
+
+    fn push_echo(&mut self, style: Style, text: String) {
+        self.push_line(style, text, Kind::Echo);
     }
 
     fn push_line(&mut self, style: Style, text: String, kind: Kind) {

@@ -6,7 +6,7 @@ mod tests;
 mod ui;
 
 use core::command::{self, Command};
-use core::environment::{Definition, Environment, IntegralOutcome};
+use core::environment::{Definition, Environment, IntegralOutcome, PrintTarget};
 use ui::app::App;
 use ui::format::{format_number, format_outcome};
 use ui::term::Terminal;
@@ -86,11 +86,36 @@ fn run_plain() -> io::Result<()> {
                     writeln!(stdout, "cleared all")?;
                 }
                 Command::ClearOutput
+                | Command::ClearInfo
                 | Command::ClearPlots
                 | Command::ClearHistory
+                | Command::Show(_)
+                | Command::Hide(_)
                 | Command::Scales(_) => {}
                 Command::Simplify(expression) => match environment.simplify(&expression) {
                     Ok(source) => writeln!(stdout, "= {}", source)?,
+                    Err(error) => writeln!(stdout, "{}", error)?,
+                },
+                Command::Print(argument) => match environment.print_target(&argument) {
+                    Ok(PrintTarget::Function {
+                        name,
+                        params,
+                        source,
+                    }) => {
+                        let params: String = params
+                            .iter()
+                            .map(|param| param.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",");
+
+                        writeln!(stdout, "{}({}) = {}", name, params, source)?;
+                    }
+                    Ok(PrintTarget::Variable { name, value }) => {
+                        writeln!(stdout, "{} = {}", name, format_number(value))?;
+                    }
+                    Ok(PrintTarget::Expression(outcome)) => {
+                        writeln!(stdout, "{}", format_outcome(outcome))?;
+                    }
                     Err(error) => writeln!(stdout, "{}", error)?,
                 },
                 Command::Differentiate(expression) => {
@@ -99,19 +124,76 @@ fn run_plain() -> io::Result<()> {
                         Err(error) => writeln!(stdout, "{}", error)?,
                     }
                 }
-                Command::Integrate { expression, bounds } => {
+                Command::Integrate {
+                    expression,
+                    variable,
+                    bounds,
+                } => {
+                    let variable_name = variable.as_deref().map(str::trim);
+                    let parsed_variable = variable_name.and_then(|name| {
+                        let mut chars = name.chars();
+
+                        match (chars.next(), chars.next()) {
+                            (Some(letter), None) if letter.is_ascii_alphabetic() => Some(letter),
+                            _ => None,
+                        }
+                    });
+
+                    if variable_name.is_some() && parsed_variable.is_none() {
+                        writeln!(
+                            stdout,
+                            "[ERROR]: unknown integration variable '{}'",
+                            variable_name.unwrap_or("")
+                        )?;
+
+                        continue;
+                    }
+
                     let bounds = bounds
                         .as_ref()
                         .map(|(lower, upper)| (lower.as_str(), upper.as_str()));
 
-                    match environment.integrate(&expression, bounds) {
-                        Ok(IntegralOutcome::Function { name, source }) => {
-                            writeln!(stdout, "{}(x) = {}   (+ C)", name, source)?;
+                    match environment.integrate(&expression, bounds, parsed_variable) {
+                        Ok(IntegralOutcome::Function {
+                            name,
+                            param,
+                            source,
+                        }) => {
+                            writeln!(stdout, "{}({}) = {}   (+ C)", name, param, source)?;
                         }
                         Ok(IntegralOutcome::Value(value)) => {
                             writeln!(stdout, "= {}", format_number(value))?;
                         }
                         Err(error) => writeln!(stdout, "{}", error)?,
+                    }
+                }
+                Command::Solve { equation, variable } => {
+                    let parsed_variable = {
+                        let mut chars = variable.trim().chars();
+
+                        match (chars.next(), chars.next()) {
+                            (Some(letter), None) if letter.is_ascii_alphabetic() => Some(letter),
+                            _ => None,
+                        }
+                    };
+
+                    match parsed_variable {
+                        None => writeln!(
+                            stdout,
+                            "[ERROR]: unknown solve variable '{}'",
+                            variable.trim()
+                        )?,
+                        Some(variable) => match environment.solve(&equation, variable) {
+                            Ok(outcome) if outcome.solutions.is_empty() => {
+                                writeln!(stdout, "no real solutions")?;
+                            }
+                            Ok(outcome) => {
+                                for solution in outcome.solutions {
+                                    writeln!(stdout, "{} = {}", outcome.variable, solution)?;
+                                }
+                            }
+                            Err(error) => writeln!(stdout, "{}", error)?,
+                        },
                     }
                 }
                 Command::Error(message) => writeln!(stdout, "{}", message)?,

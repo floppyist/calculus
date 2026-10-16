@@ -26,7 +26,7 @@ fn antiderivative(expression: &str) -> String {
     let mut environment = Environment::new();
 
     match environment
-        .integrate(expression, None)
+        .integrate(expression, None, None)
         .expect("integrate failed")
     {
         IntegralOutcome::Function { source, .. } => source,
@@ -38,7 +38,7 @@ fn definite(expression: &str, lower: &str, upper: &str) -> f64 {
     let mut environment = Environment::new();
 
     match environment
-        .integrate(expression, Some((lower, upper)))
+        .integrate(expression, Some((lower, upper)), None)
         .expect("integrate failed")
     {
         IntegralOutcome::Value(value) => value,
@@ -53,6 +53,14 @@ fn test_simplify_folds_constants() {
 }
 
 #[test]
+fn test_simplify_keeps_exact_fractions() {
+    assert_eq!(simplified("1/3"), "1/3");
+    assert_eq!(simplified("2/4"), "1/2");
+    assert_eq!(simplified("1/3+1/6"), "1/2");
+    assert_eq!(simplified("(1/2)^3"), "1/8");
+}
+
+#[test]
 fn test_simplify_combines_like_terms() {
     assert_eq!(simplified("x+x"), "2x");
     assert_eq!(simplified("2*x+3*x"), "5x");
@@ -63,6 +71,28 @@ fn test_simplify_combines_like_terms() {
 fn test_simplify_combines_powers() {
     assert_eq!(simplified("x*x"), "x^2");
     assert_eq!(simplified("x^2*x^3"), "x^5");
+}
+
+#[test]
+fn test_simplify_nested_powers_and_roots() {
+    assert_eq!(simplified("(x^2)^3"), "x^6");
+    assert_eq!(simplified("sqrt(x)^2"), "x");
+    assert_eq!(simplified("cbrt(x)^3"), "x");
+    assert_eq!(simplified("e^(3x)*e^(3x)"), "e^(6x)");
+}
+
+#[test]
+fn test_simplify_distributes_factorised_terms_in_sums() {
+    assert_eq!(simplified("(x+1)*(x+2) - x^2 - 2*x"), "x + 2");
+    assert_eq!(simplified("2*x + (x+1)*3"), "5x + 3");
+}
+
+#[test]
+fn test_simplify_cancels_rational_expression() {
+    let expression = "(-3(e^(3x))^2 + 3e^(3x)*(e^(3x) + 1))\
+/(3(cbrt(e^(3x)/(e^(3x) + 1))^3*(e^(3x) + 1)^2))";
+
+    assert_eq!(simplified(expression), "1/(e^(3x) + 1)");
 }
 
 #[test]
@@ -159,7 +189,7 @@ fn test_definite_integral_uses_numeric_fallback() {
 #[test]
 fn test_integrate_rejects_piecewise() {
     let mut environment = Environment::new();
-    let result = environment.integrate("mod(x,2)", None);
+    let result = environment.integrate("mod(x,2)", None, None);
 
     assert!(matches!(result.unwrap_err(), EvalError::NotIntegrable));
 }
@@ -167,11 +197,16 @@ fn test_integrate_rejects_piecewise() {
 #[test]
 fn test_integrate_stores_auto_named_function() {
     let mut environment = Environment::new();
-    let outcome = environment.integrate("x^2", None).unwrap();
+    let outcome = environment.integrate("x^2", None, None).unwrap();
 
     match outcome {
-        IntegralOutcome::Function { name, source } => {
+        IntegralOutcome::Function {
+            name,
+            param,
+            source,
+        } => {
             assert_eq!(name, "f");
+            assert_eq!(param, 'x');
             assert_eq!(source, "x^3/3");
         }
         IntegralOutcome::Value(_) => panic!("expected a function"),
@@ -180,6 +215,83 @@ fn test_integrate_stores_auto_named_function() {
     let value = environment.execute("f(3)").unwrap();
     let formatted = crate::ui::format::format_outcome(value);
     assert_eq!(formatted, "= 9");
+}
+
+#[test]
+fn test_integrate_function_call() {
+    let mut environment = Environment::new();
+    environment.execute("f(x)=2*x").unwrap();
+
+    let outcome = environment.integrate("f(x)", None, None).unwrap();
+
+    match outcome {
+        IntegralOutcome::Function { source, .. } => assert_eq!(source, "x^2"),
+        IntegralOutcome::Value(_) => panic!("expected a function"),
+    }
+}
+
+#[test]
+fn test_integrate_with_respect_to_variable() {
+    let mut environment = Environment::new();
+    environment.execute("f(x,y)=x*y").unwrap();
+
+    let outcome = environment.integrate("f(x,y)", None, Some('y')).unwrap();
+
+    match outcome {
+        IntegralOutcome::Function { param, source, .. } => {
+            assert_eq!(param, 'y');
+            assert!(source.contains("y^2"), "unexpected source {source}");
+        }
+        IntegralOutcome::Value(_) => panic!("expected a function"),
+    }
+}
+
+#[test]
+fn test_integrate_recursive_function_is_not_integrable() {
+    let mut environment = Environment::new();
+    environment.execute("r(x)=r(x)+1").unwrap();
+
+    let result = environment.integrate("r(x)", None, None);
+
+    assert!(matches!(result.unwrap_err(), EvalError::NotIntegrable));
+}
+
+fn solutions(equation: &str, variable: char) -> Vec<String> {
+    let environment = Environment::new();
+
+    environment
+        .solve(equation, variable)
+        .expect("solve failed")
+        .solutions
+}
+
+#[test]
+fn test_solve_linear_symbolic() {
+    assert_eq!(solutions("3x=2a+2x+3", 'x'), vec!["2a + 3".to_string()]);
+    assert_eq!(solutions("2x+4=0", 'x'), vec!["-2".to_string()]);
+}
+
+#[test]
+fn test_solve_quadratic() {
+    assert_eq!(
+        solutions("x^2-1=0", 'x'),
+        vec!["1".to_string(), "-1".to_string()]
+    );
+    assert_eq!(solutions("x^2+1=0", 'x'), Vec::<String>::new());
+}
+
+#[test]
+fn test_solve_rejects_unsupported() {
+    let environment = Environment::new();
+
+    assert!(matches!(
+        environment.solve("x^3=8", 'x').unwrap_err(),
+        EvalError::NotSolvable
+    ));
+    assert!(matches!(
+        environment.solve("2x=2x+1", 'x').unwrap_err(),
+        EvalError::NotSolvable
+    ));
 }
 
 #[test]

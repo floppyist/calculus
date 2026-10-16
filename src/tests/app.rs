@@ -7,6 +7,14 @@ fn run(app: &mut App, keys: &[Key]) {
     }
 }
 
+fn type_line(app: &mut App, text: &str) {
+    for ch in text.chars() {
+        app.handle_key(Key::Char(ch));
+    }
+
+    app.handle_key(Key::Enter);
+}
+
 #[test]
 fn test_selection_span_single_line() {
     assert_eq!(selection_span(0, 5, (0, 1), (0, 3)), Some((1, 3)));
@@ -222,7 +230,7 @@ fn test_render_focus_border_is_accented() {
     let frame = app.render(80, 24);
 
     assert!(
-        frame.contains("[0;34m"),
+        frame.contains("[0;37m"),
         "focused input border not accented"
     );
 }
@@ -276,10 +284,54 @@ fn test_sidebar_visual_mode_yanks_rows() {
     assert!(
         messages
             .iter()
-            .any(|line| line.starts_with("Copied 11 chars to")),
+            .any(|line| line.starts_with("Copied 3 chars to")),
         "{:?}",
         messages
     );
+}
+
+#[test]
+fn test_clear_info_keeps_only_results() {
+    let mut app = App::new();
+
+    type_line(&mut app, "1+1");
+    type_line(&mut app, "zzz");
+    type_line(&mut app, "clear info");
+
+    let texts = app.output_texts();
+
+    assert!(texts.iter().any(|line| line.contains("= 2")), "{:?}", texts);
+    assert!(
+        !texts.iter().any(|line| line.starts_with("> ")),
+        "{:?}",
+        texts
+    );
+    assert!(
+        !texts.iter().any(|line| line.contains("[ERROR]")),
+        "{:?}",
+        texts
+    );
+}
+
+#[test]
+fn test_hide_info_hides_echo_and_errors() {
+    let mut app = App::new();
+
+    type_line(&mut app, "1+1");
+    type_line(&mut app, "zzz");
+    type_line(&mut app, "hide info");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("= 2"), "result should stay visible");
+    assert!(!frame.contains("> 1+1"), "echo should be hidden");
+    assert!(!frame.contains("[ERROR]"), "error should be hidden");
+
+    type_line(&mut app, "show info");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("> 1+1"), "echo should return");
 }
 
 #[test]

@@ -46,6 +46,7 @@ pub fn format_scale(value: f64) -> String {
 pub fn format_outcome(outcome: Outcome) -> String {
     match outcome {
         Outcome::Value(value) => format!("= {}", format_number(value)),
+        Outcome::Exact(value) => format!("= {}", value),
         Outcome::VariableDefined(name) => format!("{} defined", name),
         Outcome::FunctionDefined(name) => format!("{} defined", name),
         Outcome::Source(source) => format!("= {}", source),

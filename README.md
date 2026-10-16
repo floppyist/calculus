@@ -39,16 +39,18 @@ The application provides an interactive terminal interface as well as a line-ori
 ### Mathematical Evaluation
 * Evaluate arithmetic and mathematical expressions.
 * Support for addition, subtraction, multiplication, division, exponentiation, and unary signs.
+* Exact rational arithmetic for constant expressions, such as `1/3` and `0.1 + 0.2` (evaluated as `1/3` and `3/10`).
 * Implicit multiplication, such as `2x` and `3(x + 1)`.
-* Mathematical constants `pi` and `e`.
+* Mathematical constants `pi`, `PI`, `π`, and `e`.
 * Variables with dependency-aware recalculation.
 * User-defined functions with one or more parameters.
 * Recursive user-defined functions, subject to a call-depth limit.
 
 ### Symbolic Mathematics
 * Algebraic expression simplification.
-* Symbolic differentiation.
-* Symbolic antiderivative generation where supported.
+* Symbolic differentiation with respect to `x`.
+* Symbolic antiderivative generation where supported, optionally with respect to a chosen variable.
+* Symbolic linear equation solving, plus quadratic solving with exact or symbolic roots.
 * Definite integration using symbolic antiderivatives when available.
 * Numerical definite integration using composite Simpson's rule when no supported symbolic antiderivative is found.
 * Symbolic inverse transformations for supported function expressions.
@@ -86,7 +88,7 @@ cargo --version
 
 1. Clone the repository and enter the project directory:
 ```bash
-git clone [https://github.com/floppyist/calculus.git](https://github.com/floppyist/calculus.git)
+git clone https://github.com/floppyist/calculus.git
 cd calculus
 
 ```
@@ -267,6 +269,18 @@ For example, the mathematical result is:
 $$\int x^2 \, dx = \frac{x^3}{3} + C$$
 
 
+* **Integration with respect to another variable:**
+
+```text
+> int x*y, y
+f(y) = 0.5(xy^2)   (+ C)
+
+```
+
+
+The second argument selects the integration variable; the remaining variables are treated as constants.
+
+
 * **Definite integration:**
 ```text
 > integrate x^2, 0, 3
@@ -283,6 +297,45 @@ $$\int_{0}^{3} x^2 \, dx = 9$$
 
 The implementation first attempts symbolic integration. If no supported antiderivative is found, it uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
 
+### Solving Equations
+
+Use `solve` followed by an equation and the variable to solve for:
+
+```text
+> solve 3x = 2a + 2x + 3, x
+x = 2a + 3
+
+> solve x^2 - 1 = 0, x
+x = 1
+x = -1
+
+```
+
+Linear equations with symbolic coefficients and quadratic equations with numeric coefficients are supported. Quadratic roots are reported exactly when possible (as fractions) and otherwise in a symbolic square-root form; unsupported degrees return an error.
+
+### Printing Definitions
+
+Use `print` to re-display a function, variable, or expression, which is convenient for long definitions:
+
+```text
+> print f(x)
+f(x) = 3x^3 + 2x
+
+```
+
+### Showing and Hiding Panes
+
+In interactive mode, individual panes can be toggled:
+
+```text
+> hide vars
+> show funcs
+> show all
+
+```
+
+Supported pane names are `plot`, `vars`, `funcs`, `info`, and `all`.
+
 ### Command Reference
 
 The following commands are recognized by the command parser:
@@ -291,18 +344,23 @@ The following commands are recognized by the command parser:
 | --- | --- |
 | `?` | Request help in interactive mode |
 | `quit` or `exit` | Exit the application |
-| `plot <expression>` | Plot an expression |
-| `scales` | Toggles axis lables |
+| `plot <expression>` | Plot one or more expressions |
+| `scales`, `scales on`, `scales off` | Control axis labels |
+| `show <pane>` / `hide <pane>` | Toggle panes: `plot`, `vars`, `funcs`, `info`, `all` |
 | `clear` | Clear the output area in interactive mode |
+| `clear info` | Remove info and echo lines from the output |
 | `clear vars` | Remove all variable definitions |
 | `clear funcs` | Remove all user-defined functions |
 | `clear plots` | Remove plotted curves in interactive mode |
-| `clear all` | Clear variables and functions |
+| `clear all` | Clear variables, functions, plots and the state file |
 | `clear history` | Clear input history in interactive mode |
-| `simp <expression>` | Alias for simplify |
-| `diff <expression>` | Differentiate an expression |
-| `int <expression>` | Compute an indefinite integral |
+| `simplify` or `simp <expression>` | Simplify an expression |
+| `diff`, `derive`, `derivative <expression>` | Differentiate an expression |
+| `int`, `integral`, `integrate <expression>` | Compute an indefinite integral |
+| `int <expression>, <var>` | Integrate with respect to a chosen variable |
 | `int <expression>, <a>, <b>` | Compute a definite integral |
+| `solve <equation>, <variable>` | Solve an equation for a variable |
+| `print <name or expression>` | Print a function, variable, or expression |
 
 *(Mode-specific behavior: Some commands are implemented differently in line-oriented mode. Help is only available in interactive mode, while commands that manipulate the interactive display, plots, history, or scales may have no visible effect in line-oriented mode.)*
 
@@ -334,6 +392,7 @@ Implicit multiplication is also supported:
 | Constant | Meaning |
 | --- | --- |
 | `pi` | Mathematical constant $\pi$ |
+| `PI` | Alternative notation for $\pi$ |
 | `π` | Alternative notation for $\pi$ |
 | `e` | Euler's number |
 
@@ -431,15 +490,23 @@ The symbolic engine operates on an internal abstract syntax tree (AST). Rather t
 
 The algebra module implements rewrite rules for expressions involving sums, products, divisions, powers, negation, and supported built-in functions. Simplification aims to produce a more compact representation. It is not a general-purpose computer algebra system, and it does not guarantee a globally optimal or mathematically canonical form.
 
+### Exact Rational Arithmetic
+
+Constant expressions are folded exactly using rational arithmetic, so divisions of integers and decimal literals keep their exact value instead of accumulating floating-point error. For example, `1/3` evaluates to `1/3` and `0.1 + 0.2` evaluates to `3/10`. Exactness applies while no variables or transcendental functions are involved; once a variable or a function such as `sqrt`, `sin`, or `exp` appears, evaluation proceeds in floating point.
+
 ### Differentiation
 
 Symbolic differentiation is performed with respect to $x$. The result is simplified and registered as a new single-variable function. Expressions involving unsupported differentiation rules may return an error indicating that differentiation is not available.
 
 ### Integration
 
-Integration supports symbolic antiderivatives for a subset of expressions. Definite integration uses the antiderivative and the fundamental theorem of calculus whenever symbolic integration succeeds. If no symbolic antiderivative is found, definite integration falls back to composite Simpson's rule.
+Integration supports symbolic antiderivatives for a subset of expressions, including user-defined function calls that can be expanded. The integration variable defaults to $x$ but can be chosen with a second argument. Definite integration uses the antiderivative and the fundamental theorem of calculus whenever symbolic integration succeeds. If no symbolic antiderivative is found, definite integration falls back to composite Simpson's rule.
 
 *(This distinction is important: numerical fallback is implemented for definite integration, while indefinite integration requires a supported symbolic antiderivative.)*
+
+### Equation Solving
+
+The `solve` command supports linear equations (including symbolic coefficients) and quadratic equations with numeric coefficients. Linear solutions are produced symbolically; quadratic solutions are reported as exact fractions when the discriminant has a rational square root, and otherwise in a square-root form. Higher-degree equations are not supported.
 
 ### Inverse Expressions
 
@@ -528,13 +595,21 @@ calculus/
     │   ├── node.rs
     │   ├── environment.rs
     │   ├── algebra.rs
+    │   ├── rational.rs
     │   ├── command.rs
     │   └── plot.rs
-    └── ui/
-        ├── app.rs
-        ├── format.rs
-        ├── persist.rs
-        └── term.rs
+    ├── ui/
+    │   ├── mod.rs
+    │   ├── app.rs
+    │   ├── canvas.rs
+    │   ├── layout.rs
+    │   ├── input.rs
+    │   ├── clipboard.rs
+    │   ├── format.rs
+    │   ├── persist.rs
+    │   └── term.rs
+    └── tests/
+        └── ...
 
 ```
 
@@ -546,13 +621,18 @@ calculus/
 | `core/parser.rs` | Parses tokens into an abstract syntax tree using operator precedence and associativity rules. |
 | `core/node.rs` | Defines expression nodes and evaluates expressions in a variable and function context. |
 | `core/environment.rs` | Manages definitions, evaluates assignments, validates function calls, and coordinates mathematical operations. |
-| `core/algebra.rs` | Implements symbolic simplification, differentiation, integration, substitutions, and expression formatting. |
-| `core/command.rs` | Parses application commands such as `plot`, `diff`, `integrate`, and `clear`. |
+| `core/algebra.rs` | Implements symbolic simplification, differentiation, integration, equation solving, substitutions, and expression formatting. |
+| `core/rational.rs` | Implements exact rational arithmetic used for constant folding. |
+| `core/command.rs` | Parses application commands such as `plot`, `diff`, `integrate`, `solve`, `print`, and the `clear` / `show` / `hide` family. |
 | `core/plot.rs` | Samples mathematical expressions and converts curves into terminal-renderable Braille output. |
 | `ui/app.rs` | Coordinates the interactive application and its state. |
+| `ui/canvas.rs` | Provides the frame buffer, colors, and Braille handling for the terminal interface. |
+| `ui/layout.rs` | Computes the pane layout from the terminal size. |
+| `ui/input.rs` | Reads keys and implements the line editor. |
+| `ui/clipboard.rs` | Copies to and pastes from the operating system clipboard. |
 | `ui/format.rs` | Formats numerical values and calculation outcomes for display. |
 | `ui/persist.rs` | Loads and saves interactive session state. |
-| `ui/term.rs` | Manages terminal setup and restoration. |
+| `ui/term.rs` | Manages terminal setup and restoration across platforms. |
 | `main.rs` | Selects the execution mode and initializes the application. |
 
 ### Expression Processing
@@ -643,9 +723,11 @@ Potential improvements for future versions include:
 
 Calculus is a compact mathematical tool, not a full computer algebra system. Users should be aware of the following limitations:
 
-* Symbolic simplification, differentiation, integration, and inverse transformations are limited to implemented rules.
+* Symbolic simplification, differentiation, integration, equation solving, and inverse transformations are limited to implemented rules.
+* Equation solving is limited to linear and quadratic equations.
 * Indefinite integration fails when no supported symbolic antiderivative is found.
 * Numerical definite integration uses a fixed number of subintervals rather than an adaptive error-controlled method.
+* Exact rational arithmetic applies only to constant expressions; expressions involving variables or transcendental functions use floating point and can introduce rounding errors.
 * Floating-point arithmetic can introduce rounding errors and non-finite results.
 * Expressions outside a function's mathematical domain may produce `NaN` or infinity.
 * Function plotting uses a fixed horizontal range and finite sampling resolution, so discontinuities and narrow features may not be represented accurately.

@@ -1,10 +1,62 @@
-use crate::core::environment::{Environment, EvalError, Outcome};
+use crate::core::environment::{Environment, EvalError, Outcome, PrintTarget};
 
 fn value_of(environment: &Environment, name: char) -> f64 {
     *environment
         .values()
         .get(&name)
         .expect("variable is missing")
+}
+
+#[test]
+fn test_exact_rational_results() {
+    let mut environment = Environment::new();
+    let render = |environment: &mut Environment, expression: &str| {
+        crate::ui::format::format_outcome(environment.execute(expression).unwrap())
+    };
+
+    assert_eq!(render(&mut environment, "1/3"), "= 1/3");
+    assert_eq!(render(&mut environment, "1/3+1/6"), "= 1/2");
+    assert_eq!(render(&mut environment, "0.1+0.2"), "= 3/10");
+    assert_eq!(render(&mut environment, "(1/2)^3"), "= 1/8");
+    assert_eq!(render(&mut environment, "2^-2"), "= 1/4");
+    assert_eq!(render(&mut environment, "5"), "= 5");
+    assert_eq!(render(&mut environment, "pi"), "= 3.141592653589793");
+}
+
+#[test]
+fn test_print_target_resolves_function_variable_and_expression() {
+    let mut environment = Environment::new();
+
+    environment.execute("f(x)=3*x+4*x^2").unwrap();
+    environment.execute("x=10").unwrap();
+
+    match environment.print_target("f(x)").unwrap() {
+        PrintTarget::Function { name, source, .. } => {
+            assert_eq!(name, "f");
+            assert!(!source.is_empty());
+        }
+        other => panic!("expected function, got {:?}", other),
+    }
+
+    match environment.print_target("x").unwrap() {
+        PrintTarget::Variable { name, value } => {
+            assert_eq!(name, 'x');
+            assert_eq!(value, 10.0);
+        }
+        other => panic!("expected variable, got {:?}", other),
+    }
+
+    match environment.print_target("2+3").unwrap() {
+        PrintTarget::Expression(Outcome::Value(value)) => assert_eq!(value, 5.0),
+        other => panic!("expected value, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_print_target_unknown_function_name() {
+    let environment = Environment::new();
+
+    assert!(environment.print_target("g(x)").is_err());
 }
 
 #[test]
@@ -200,6 +252,7 @@ fn test_definitions_round_trip() {
 fn eval(environment: &mut Environment, expression: &str) -> f64 {
     match environment.execute(expression).unwrap() {
         Outcome::Value(value) => value,
+        Outcome::Exact(value) => value.to_f64(),
         _ => panic!("expected a value"),
     }
 }
@@ -311,6 +364,6 @@ fn test_function_source_is_canonical() {
 
     assert_eq!(
         environment.function_definitions(),
-        vec!["g(x) = 3x + 4n^x", "h(x) = g(x) + 2(x + 1)"]
+        vec!["g(x) = 3x + 4n^x", "h(x) = 2x + g(x) + 2"]
     );
 }

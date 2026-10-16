@@ -16,7 +16,6 @@ pub enum Key {
     CtrlC,
     CtrlD,
     CtrlL,
-    CtrlR,
     Escape,
     Unknown,
 }
@@ -253,10 +252,6 @@ impl KeyReader {
             0x0c => {
                 self.buffer.remove(0);
                 Some(Key::CtrlL)
-            }
-            0x12 => {
-                self.buffer.remove(0);
-                Some(Key::CtrlR)
             }
             _ if first < 0x20 => {
                 self.buffer.remove(0);

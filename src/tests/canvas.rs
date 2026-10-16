@@ -8,7 +8,7 @@ fn test_put_and_print_clip() {
     canvas.print(0, 0, "hello world", Style::new());
     canvas.print_clipped(0, 1, 5, "hello world", Style::new());
 
-    let rendered = canvas.to_string();
+    let rendered = canvas.render();
 
     assert!(rendered.contains("hello"));
     assert!(rendered.contains('…'));
@@ -20,7 +20,7 @@ fn test_draw_box_corners() {
 
     canvas.draw_box(0, 0, 12, 4, Style::new(), Some("T"));
 
-    let rendered = canvas.to_string();
+    let rendered = canvas.render();
 
     assert!(rendered.contains('┌'));
     assert!(rendered.contains('┘'));
@@ -33,7 +33,7 @@ fn test_put_braille_sets_bits() {
 
     canvas.put_braille(0, 0, 0, 0, Style::new());
 
-    let rendered = canvas.to_string();
+    let rendered = canvas.render();
     let ch = rendered
         .chars()
         .find(|c| (*c as u32) >= BRAILLE_BASE)

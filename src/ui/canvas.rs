@@ -234,7 +234,7 @@ impl Canvas {
     }
 
     // Builds the full frame; every row is positioned absolutely
-    pub fn to_string(&self) -> String {
+    pub fn render(&self) -> String {
         let mut out = String::with_capacity(self.width * self.height + self.height * 8);
         let mut current = Style::new();
 

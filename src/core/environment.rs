@@ -5,6 +5,7 @@ use crate::core::Token;
 use crate::core::algebra;
 use crate::core::node::{EvalContext, Node};
 use crate::core::parser::{ParseError, generate_ast};
+use crate::core::rational::Rational;
 use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side};
 
 // Names auto assigned to plotted curves ('e' is reserved for Euler's number)
@@ -30,6 +31,7 @@ pub enum EvalError {
     NotDifferentiable,
     NotIntegrable,
     NotInvertible,
+    NotSolvable,
 }
 
 impl fmt::Display for EvalError {
@@ -61,6 +63,9 @@ impl fmt::Display for EvalError {
             EvalError::NotInvertible => {
                 write!(f, "[ERROR]: Expression has no known inverse")
             }
+            EvalError::NotSolvable => {
+                write!(f, "[ERROR]: Equation can not be solved")
+            }
         }
     }
 }
@@ -80,6 +85,7 @@ impl From<ParseError> for EvalError {
 #[derive(Debug)]
 pub enum Outcome {
     Value(f64),
+    Exact(Rational),
     VariableDefined(char),
     FunctionDefined(String),
     Source(String),
@@ -88,8 +94,34 @@ pub enum Outcome {
 // Result of an integration: a new function or a definite value
 #[derive(Debug)]
 pub enum IntegralOutcome {
-    Function { name: String, source: String },
+    Function {
+        name: String,
+        param: char,
+        source: String,
+    },
     Value(f64),
+}
+
+// The solutions of a solved equation
+#[derive(Debug)]
+pub struct SolveOutcome {
+    pub variable: char,
+    pub solutions: Vec<String>,
+}
+
+// What the print command resolved its argument to
+#[derive(Debug)]
+pub enum PrintTarget {
+    Function {
+        name: String,
+        params: Vec<char>,
+        source: String,
+    },
+    Variable {
+        name: char,
+        value: f64,
+    },
+    Expression(Outcome),
 }
 
 // Target of an assignment
@@ -120,6 +152,48 @@ impl Environment {
 
     pub fn values(&self) -> &HashMap<char, f64> {
         &self.values
+    }
+
+    // Resolves a print argument to a function, a variable or an expression
+    pub fn print_target(&self, argument: &str) -> Result<PrintTarget, EvalError> {
+        let target = argument.trim();
+
+        if let Some(name) = self.reference_function_name(target)
+            && let Some(definition) = self.functions.get(&name)
+        {
+            return Ok(PrintTarget::Function {
+                name,
+                params: definition.params.clone(),
+                source: definition.source.clone(),
+            });
+        }
+
+        if let Some(name) = single_variable(target)
+            && let Some(value) = self.values.get(&name)
+        {
+            return Ok(PrintTarget::Variable {
+                name,
+                value: *value,
+            });
+        }
+
+        let outcome = self.evaluate_expression(target)?;
+
+        Ok(PrintTarget::Expression(outcome))
+    }
+
+    fn reference_function_name(&self, text: &str) -> Option<String> {
+        if self.functions.contains_key(text) {
+            return Some(text.to_string());
+        }
+
+        let name = text.split('(').next().unwrap_or(text).trim();
+
+        if name != text && self.functions.contains_key(name) {
+            return Some(name.to_string());
+        }
+
+        None
     }
 
     // Next free function name: f..z, a..d, then f2, g2, ... ('e' is reserved for Euler's number)
@@ -233,7 +307,12 @@ impl Environment {
     pub fn simplify(&self, expression: &str) -> Result<String, EvalError> {
         let ast = self.parse_and_validate(expression, &[])?;
 
-        Ok(algebra::to_source(&algebra::simplify(&ast)))
+        let simplified = match algebra::fold_rational(&ast) {
+            Some(rational) => algebra::rational_to_node(rational),
+            None => algebra::simplify(&ast),
+        };
+
+        Ok(algebra::to_source(&simplified))
     }
 
     // Differentiates an expression and stores it as a new one-parameter function
@@ -244,7 +323,23 @@ impl Environment {
             algebra::differentiate(&ast, 'x', &functions).ok_or(EvalError::NotDifferentiable)?;
         let simplified = algebra::simplify(&derivative);
 
-        Ok(self.define_function(&simplified))
+        Ok(self.define_function(&simplified, 'x'))
+    }
+
+    // Solves an equation for a variable; returns the solution expressions
+    pub fn solve(&self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
+        let (left, right) = split_equation(equation).ok_or(EvalError::InvalidAssignment)?;
+        let left = self.parse_and_validate(left, &[])?;
+        let right = self.parse_and_validate(right, &[])?;
+        let solutions =
+            algebra::solve_equation(&left, &right, variable).ok_or(EvalError::NotSolvable)?;
+
+        let sources = solutions.iter().map(algebra::to_source).collect();
+
+        Ok(SolveOutcome {
+            variable,
+            solutions: sources,
+        })
     }
 
     // Integrates an expression; bounds make it definite, otherwise a function is stored
@@ -252,31 +347,38 @@ impl Environment {
         &mut self,
         expression: &str,
         bounds: Option<(&str, &str)>,
+        variable: Option<char>,
     ) -> Result<IntegralOutcome, EvalError> {
         let ast = algebra::simplify(&self.parse_and_validate(expression, &[])?);
+        let functions = self.function_map();
+        let variable = variable.unwrap_or('x');
 
         match bounds {
             None => {
-                let antiderivative =
-                    algebra::integrate(&ast, 'x').ok_or(EvalError::NotIntegrable)?;
+                let antiderivative = algebra::integrate(&ast, variable, &functions)
+                    .ok_or(EvalError::NotIntegrable)?;
                 let simplified = algebra::simplify(&antiderivative);
-                let (name, source) = self.define_function(&simplified);
+                let (name, source) = self.define_function(&simplified, variable);
 
-                Ok(IntegralOutcome::Function { name, source })
+                Ok(IntegralOutcome::Function {
+                    name,
+                    param: variable,
+                    source,
+                })
             }
 
             Some((lower, upper)) => {
                 let lower = self.evaluate_constant(lower)?;
                 let upper = self.evaluate_constant(upper)?;
 
-                let value = match algebra::integrate(&ast, 'x') {
+                let value = match algebra::integrate(&ast, variable, &functions) {
                     Some(antiderivative) => {
                         let simplified = algebra::simplify(&antiderivative);
 
-                        self.evaluate_at(&simplified, 'x', upper)
-                            - self.evaluate_at(&simplified, 'x', lower)
+                        self.evaluate_at(&simplified, variable, upper)
+                            - self.evaluate_at(&simplified, variable, lower)
                     }
-                    None => self.simpson(&ast, lower, upper),
+                    None => self.simpson(&ast, lower, upper, variable),
                 };
 
                 Ok(IntegralOutcome::Value(value))
@@ -285,7 +387,7 @@ impl Environment {
     }
 
     // Stores a single-variable expression as a new auto-named function
-    fn define_function(&mut self, body: &Node) -> (String, String) {
+    fn define_function(&mut self, body: &Node, param: char) -> (String, String) {
         let source = algebra::to_source(body);
         let name = self.next_function_name();
 
@@ -293,7 +395,7 @@ impl Environment {
             name.clone(),
             Definition {
                 source: source.clone(),
-                params: vec!['x'],
+                params: vec![param],
                 body: body.clone(),
             },
         );
@@ -331,16 +433,16 @@ impl Environment {
     }
 
     // Composite Simpson rule, used when no antiderivative is available
-    fn simpson(&self, node: &Node, lower: f64, upper: f64) -> f64 {
+    fn simpson(&self, node: &Node, lower: f64, upper: f64, name: char) -> f64 {
         let steps = 1000;
         let width = (upper - lower) / steps as f64;
-        let mut total = self.evaluate_at(node, 'x', lower) + self.evaluate_at(node, 'x', upper);
+        let mut total = self.evaluate_at(node, name, lower) + self.evaluate_at(node, name, upper);
 
         for index in 1..steps {
             let sample = lower + width * index as f64;
             let weight = if index % 2 == 1 { 4.0 } else { 2.0 };
 
-            total += weight * self.evaluate_at(node, 'x', sample);
+            total += weight * self.evaluate_at(node, name, sample);
         }
 
         total * width / 3.0
@@ -367,6 +469,14 @@ impl Environment {
 
     fn evaluate_expression(&self, expression: &str) -> Result<Outcome, EvalError> {
         let ast = self.parse_and_validate(expression, &[])?;
+
+        if let Some(rational) = algebra::fold_rational(&ast) {
+            if rational.is_integer() {
+                return Ok(Outcome::Value(rational.to_f64()));
+            }
+
+            return Ok(Outcome::Exact(rational));
+        }
 
         if let Some(name) = self.unknown_variable(&ast) {
             if let Some(source) = self.inverse_source(expression)? {
@@ -919,4 +1029,39 @@ fn collect_vars(
 
         Node::IntNumber(_) | Node::FloatNumber(_) => {}
     }
+}
+
+// Some(name) when the text is a single alphabetic character
+fn single_variable(text: &str) -> Option<char> {
+    let mut chars = text.chars();
+
+    match (chars.next(), chars.next()) {
+        (Some(character), None) if character.is_ascii_alphabetic() => Some(character),
+        _ => None,
+    }
+}
+
+// Splits 'left = right' at a top-level equals sign
+fn split_equation(text: &str) -> Option<(&str, &str)> {
+    let mut depth = 0;
+
+    for (index, character) in text.char_indices() {
+        match character {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            '=' if depth == 0 => {
+                let left = text[..index].trim();
+                let right = text[index + 1..].trim();
+
+                if left.is_empty() || right.is_empty() {
+                    return None;
+                }
+
+                return Some((left, right));
+            }
+            _ => {}
+        }
+    }
+
+    None
 }
