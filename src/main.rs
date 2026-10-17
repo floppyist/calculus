@@ -159,7 +159,7 @@ fn run_plain() -> io::Result<()> {
                             param,
                             source,
                         }) => {
-                            writeln!(stdout, "{}({}) = {}   (+ C)", name, param, source)?;
+                            writeln!(stdout, "{}({}) = {}", name, param, source)?;
                         }
                         Ok(IntegralOutcome::Value(value)) => {
                             writeln!(stdout, "= {}", format_number(value))?;

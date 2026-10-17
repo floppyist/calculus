@@ -161,6 +161,12 @@ pub fn render(curves: &[(&str, &[Option<f64>])], width: usize, height: usize) ->
         for (column, sample) in samples.iter().enumerate() {
             let Some(y) = sample else { continue };
 
+            // Points outside the visible range are dropped instead of being
+            // clamped to the top or bottom edge (which fakes a flat line)
+            if !y.is_finite() || *y < y_min || *y > y_max {
+                continue;
+            }
+
             let row = row_for(*y, y_min, y_max, pixel_height);
 
             set_pixel(&mut cells, width, height, column, row);

@@ -11,6 +11,9 @@ use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side}
 // Names auto assigned to plotted curves ('e' is reserved for Euler's number)
 const AUTO_NAMES: &str = "fghijklmnopqrstuvwxyzabcd";
 
+// Integration constants: one letter per antiderivative, I and O stay out
+const CONSTANT_POOL: &str = "CDFGHJKLMNPQRSTUVWXYZ";
+
 // A definition (variable or function) with its source text for display
 #[derive(Debug)]
 pub struct Definition {
@@ -86,7 +89,8 @@ impl From<ParseError> for EvalError {
 pub enum Outcome {
     Value(f64),
     Exact(Rational),
-    VariableDefined(char),
+    // Definition lines carry their full text, e.g. "f(x) = x^2"
+    VariableDefined(String),
     FunctionDefined(String),
     Source(String),
 }
@@ -152,6 +156,15 @@ impl Environment {
 
     pub fn values(&self) -> &HashMap<char, f64> {
         &self.values
+    }
+
+    // Integration constant letters that appear as free variables in functions
+    pub fn constant_letters(&self) -> Vec<char> {
+        let mut letters: Vec<char> = self.constant_letters_in_use().into_iter().collect();
+
+        letters.sort();
+
+        letters
     }
 
     // Resolves a print argument to a function, a variable or an expression
@@ -331,15 +344,87 @@ impl Environment {
         let (left, right) = split_equation(equation).ok_or(EvalError::InvalidAssignment)?;
         let left = self.parse_and_validate(left, &[])?;
         let right = self.parse_and_validate(right, &[])?;
-        let solutions =
-            algebra::solve_equation(&left, &right, variable).ok_or(EvalError::NotSolvable)?;
 
-        let sources = solutions.iter().map(algebra::to_source).collect();
+        let solutions = match algebra::solve_equation(&left, &right, variable) {
+            Some(solutions) => solutions.iter().map(algebra::to_source).collect(),
+            None => {
+                let difference =
+                    algebra::simplify(&Node::Sub(Box::new(left.clone()), Box::new(right.clone())));
+                let roots = self.numeric_solutions(&difference, variable);
+
+                if roots.is_empty() {
+                    return Err(EvalError::NotSolvable);
+                }
+
+                roots.iter().map(|root| format_root(*root)).collect()
+            }
+        };
 
         Ok(SolveOutcome {
             variable,
-            solutions: sources,
+            solutions,
         })
+    }
+
+    // Scans a geometric grid for sign changes to find real roots numerically
+    fn numeric_solutions(&self, node: &Node, variable: char) -> Vec<f64> {
+        let mut samples = Vec::new();
+
+        for exponent in -3..=6 {
+            let base = 10f64.powi(exponent);
+
+            for multiple in [1.0, 2.0, 5.0] {
+                samples.push(multiple * base);
+                samples.push(-multiple * base);
+            }
+        }
+
+        samples.push(0.0);
+        samples.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        samples.dedup();
+
+        let mut roots = Vec::new();
+        let mut previous: Option<(f64, f64)> = None;
+
+        for sample in samples {
+            let value = self.evaluate_at(node, variable, sample);
+
+            if !value.is_finite() {
+                previous = None;
+                continue;
+            }
+
+            if value == 0.0 && self.is_crossing(node, variable, sample) {
+                push_root(&mut roots, sample);
+            }
+
+            if let Some((last_x, last_y)) = previous
+                && last_y != 0.0
+                && value != 0.0
+                && last_y.signum() != value.signum()
+                && let Some(root) = bisect(self, node, variable, last_x, sample)
+                && self.is_crossing(node, variable, root)
+            {
+                push_root(&mut roots, root);
+            }
+
+            previous = Some((sample, value));
+        }
+
+        roots
+    }
+
+    // A genuine simple root must change sign in a small neighbourhood
+    fn is_crossing(&self, node: &Node, variable: char, root: f64) -> bool {
+        let delta = 1e-6 * (1.0 + root.abs());
+        let left = self.evaluate_at(node, variable, root - delta);
+        let right = self.evaluate_at(node, variable, root + delta);
+
+        left.is_finite()
+            && right.is_finite()
+            && left != 0.0
+            && right != 0.0
+            && left.signum() != right.signum()
     }
 
     // Integrates an expression; bounds make it definite, otherwise a function is stored
@@ -357,8 +442,12 @@ impl Environment {
             None => {
                 let antiderivative = algebra::integrate(&ast, variable, &functions)
                     .ok_or(EvalError::NotIntegrable)?;
-                let simplified = algebra::simplify(&antiderivative);
-                let (name, source) = self.define_function(&simplified, variable);
+                let letter = self.next_constant_letter();
+                let with_constant = algebra::simplify(&Node::Add(
+                    Box::new(algebra::simplify(&antiderivative)),
+                    Box::new(Node::Variable(letter)),
+                ));
+                let (name, source) = self.define_function(&with_constant, variable);
 
                 Ok(IntegralOutcome::Function {
                     name,
@@ -542,6 +631,11 @@ impl Environment {
 
     // First free variable of the expression that is not defined, if any
     fn unknown_variable(&self, node: &Node) -> Option<char> {
+        self.undefined_variable(node, &[])
+    }
+
+    // First undefined variable, treating the given names as known
+    pub fn undefined_variable(&self, node: &Node, known: &[char]) -> Option<char> {
         let functions = self.function_map();
         let mut collected = HashSet::new();
         let mut visited_functions = HashSet::new();
@@ -554,13 +648,55 @@ impl Environment {
             &mut collected,
         );
 
+        let in_use = self.constant_letters_in_use();
         let mut names: Vec<char> = collected
             .into_iter()
-            .filter(|name| !self.values.contains_key(name))
+            .filter(|name| {
+                !self.values.contains_key(name) && !in_use.contains(name) && !known.contains(name)
+            })
             .collect();
 
         names.sort();
         names.into_iter().next()
+    }
+
+    // First constant letter that is neither a defined variable nor already
+    // used as a free variable in a stored function body
+    fn next_constant_letter(&self) -> char {
+        let in_use = self.constant_letters_in_use();
+
+        CONSTANT_POOL
+            .chars()
+            .find(|letter| !in_use.contains(letter) && !self.values.contains_key(letter))
+            .unwrap_or('C')
+    }
+
+    // Constant letters appearing as free variables in stored functions
+    fn constant_letters_in_use(&self) -> HashSet<char> {
+        let functions = self.function_map();
+        let mut in_use = HashSet::new();
+
+        for definition in self.functions.values() {
+            let bound: HashSet<char> = definition.params.iter().copied().collect();
+            let mut collected = HashSet::new();
+            let mut visited = HashSet::new();
+
+            collect_vars(
+                &definition.body,
+                &functions,
+                &bound,
+                &mut visited,
+                &mut collected,
+            );
+
+            for name in collected {
+                if CONSTANT_POOL.contains(name) {
+                    in_use.insert(name);
+                }
+            }
+        }
+
+        in_use
     }
 
     fn apply_assignment(&mut self, left: &str, right: &str) -> Result<Outcome, EvalError> {
@@ -593,7 +729,10 @@ impl Environment {
 
                 self.recompute()?;
 
-                Ok(Outcome::VariableDefined(name))
+                Ok(Outcome::VariableDefined(format!(
+                    "{} = {}",
+                    name, expression
+                )))
             }
 
             Target::Function(name, params) => {
@@ -609,11 +748,12 @@ impl Environment {
                 // Store the compact form so every display shows the same source
                 let body = algebra::simplify(&body);
                 let source = algebra::to_source(&body);
+                let parameters: String = params.iter().copied().collect();
 
                 self.functions.insert(
                     name.clone(),
                     Definition {
-                        source,
+                        source: source.clone(),
                         params,
                         body,
                     },
@@ -621,7 +761,10 @@ impl Environment {
 
                 self.recompute()?;
 
-                Ok(Outcome::FunctionDefined(name))
+                Ok(Outcome::FunctionDefined(format!(
+                    "{}({}) = {}",
+                    name, parameters, source
+                )))
             }
         }
     }
@@ -655,7 +798,9 @@ impl Environment {
             arities.insert(name.clone(), *arity);
         }
 
-        let tokens = tokenize(expression, &names)?;
+        let known_variables: Vec<char> = self.values.keys().copied().collect();
+
+        let tokens = tokenize(expression, &names, &known_variables)?;
         let ast = generate_ast(tokens)?;
 
         validate_calls(&ast, &arities)?;
@@ -912,6 +1057,18 @@ fn rewrite_inverses(
 
             Ok(Node::Call(name.clone(), rewritten?))
         }
+        Node::Sum(index, lower, upper, body) => Ok(Node::Sum(
+            *index,
+            Box::new(rewrite_inverses(lower, functions)?),
+            Box::new(rewrite_inverses(upper, functions)?),
+            Box::new(rewrite_inverses(body, functions)?),
+        )),
+        Node::Product(index, lower, upper, body) => Ok(Node::Product(
+            *index,
+            Box::new(rewrite_inverses(lower, functions)?),
+            Box::new(rewrite_inverses(upper, functions)?),
+            Box::new(rewrite_inverses(body, functions)?),
+        )),
     }
 }
 
@@ -1027,6 +1184,16 @@ fn collect_vars(
             }
         }
 
+        Node::Sum(index, lower, upper, body) | Node::Product(index, lower, upper, body) => {
+            collect_vars(lower, functions, bound, visited_functions, out);
+            collect_vars(upper, functions, bound, visited_functions, out);
+
+            let mut local_bound = bound.clone();
+
+            local_bound.insert(*index);
+            collect_vars(body, functions, &local_bound, visited_functions, out);
+        }
+
         Node::IntNumber(_) | Node::FloatNumber(_) => {}
     }
 }
@@ -1064,4 +1231,59 @@ fn split_equation(text: &str) -> Option<(&str, &str)> {
     }
 
     None
+}
+
+// Bisection on a sign-change interval, stopping once the bracket is tiny
+fn bisect(
+    environment: &Environment,
+    node: &Node,
+    variable: char,
+    mut low: f64,
+    mut high: f64,
+) -> Option<f64> {
+    let mut low_value = environment.evaluate_at(node, variable, low);
+    let high_value = environment.evaluate_at(node, variable, high);
+
+    if low_value.signum() == high_value.signum() {
+        return None;
+    }
+
+    for _ in 0..200 {
+        let middle = (low + high) / 2.0;
+        let middle_value = environment.evaluate_at(node, variable, middle);
+
+        if middle_value == 0.0 || (high - low) < 1e-12 * (1.0 + middle.abs()) {
+            return Some(middle);
+        }
+
+        if middle_value.signum() == low_value.signum() {
+            low = middle;
+            low_value = middle_value;
+        } else {
+            high = middle;
+        }
+    }
+
+    Some((low + high) / 2.0)
+}
+
+fn push_root(roots: &mut Vec<f64>, value: f64) {
+    if roots
+        .iter()
+        .all(|root| (root - value).abs() > 1e-9 * (1.0 + value.abs()))
+    {
+        roots.push(value);
+    }
+}
+
+// Compact decimal for a numerically found root
+fn format_root(value: f64) -> String {
+    let text = format!("{:.10}", value);
+    let trimmed = text.trim_end_matches('0').trim_end_matches('.');
+
+    if trimmed.is_empty() || trimmed == "0" || trimmed == "-0" {
+        format!("{}", value)
+    } else {
+        trimmed.to_string()
+    }
 }

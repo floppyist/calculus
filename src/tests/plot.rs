@@ -43,6 +43,21 @@ fn test_render_without_finite_values() {
 }
 
 #[test]
+fn test_render_drops_out_of_range_points() {
+    // A far outlier is clipped by y_range and must be skipped, not drawn as a
+    // flat line on the plot's top edge
+    let control: Vec<Option<f64>> = vec![Some(0.0); 8];
+    let mut spiked = control.clone();
+
+    spiked[7] = Some(1000.0);
+
+    let clean = render(&[("f", &control)], 4, 3);
+    let with_spike = render(&[("f", &spiked)], 4, 3);
+
+    assert_eq!(&clean[1..], &with_spike[1..]);
+}
+
+#[test]
 fn test_y_range_spans_multiple_curves() {
     let flat = vec![Some(0.0); 4];
     let rising = vec![Some(1.0), Some(2.0), Some(3.0), Some(4.0)];

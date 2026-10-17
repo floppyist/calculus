@@ -54,7 +54,7 @@ fn test_visual_mode_enter_and_leave() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
 
     assert!(!app.visual_active());
 
@@ -70,7 +70,7 @@ fn test_output_cursor_moves_without_selecting() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
 
     for key in [
         Key::Char('h'),
@@ -88,7 +88,7 @@ fn test_visual_yank_selection_reports_characters() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('y'));
 
@@ -110,7 +110,7 @@ fn test_visual_word_motion_reports_characters() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('w'));
     app.handle_key(Key::Char('y'));
@@ -131,7 +131,7 @@ fn test_yank_line_without_selection() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('y'));
 
     assert!(!app.visual_active());
@@ -152,7 +152,7 @@ fn test_visual_yank_output_copies_everything() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('Y'));
 
@@ -174,7 +174,7 @@ fn test_render_draws_visual_selection() {
     let mut app = App::new();
 
     run(&mut app, &[Key::Char('2'), Key::Enter]);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('g'));
 
@@ -193,7 +193,7 @@ fn test_render_follows_visual_cursor() {
         run(&mut app, &[Key::Char('1'), Key::Enter]);
     }
 
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('g'));
 
@@ -213,7 +213,7 @@ fn test_render_visual_cursor_starts_visible_at_bottom() {
         run(&mut app, &[Key::Char('1'), Key::Enter]);
     }
 
-    app.handle_key(Key::Tab);
+    app.focus_output();
 
     let frame = app.render(80, 10);
 
@@ -244,7 +244,7 @@ fn test_render_selection_spans_wrapped_line() {
     }
 
     app.handle_key(Key::Enter);
-    app.handle_key(Key::Tab);
+    app.focus_output();
     app.handle_key(Key::Char('v'));
     app.handle_key(Key::Char('G'));
 
@@ -335,6 +335,59 @@ fn test_hide_info_hides_echo_and_errors() {
 }
 
 #[test]
+fn test_sidebar_lists_builtin_constants() {
+    let mut app = App::new();
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("pi [const]"), "pi missing: {frame}");
+    assert!(frame.contains("e [const]"), "e missing: {frame}");
+}
+
+#[test]
+fn test_setting_e_marks_it_custom() {
+    let mut app = App::new();
+
+    type_line(&mut app, "e=5");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("e [custom] = 5"), "e value missing: {frame}");
+}
+
+#[test]
+fn test_plot_constant_from_sidebar() {
+    let mut app = App::new();
+
+    // The first row of a fresh session is the constant e
+    app.handle_key(Key::Tab);
+    app.handle_key(Key::Char(' '));
+
+    let texts = app.output_texts();
+
+    assert!(
+        texts.iter().any(|line| line.starts_with("plotted e =")),
+        "{:?}",
+        texts
+    );
+}
+
+#[test]
+fn test_hidden_info_keeps_result_input() {
+    let mut app = App::new();
+
+    type_line(&mut app, "1+1");
+    type_line(&mut app, "hide info");
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        frame.contains("1+1 = 2"),
+        "hidden echo must be folded into the result: {frame}"
+    );
+}
+
+#[test]
 fn test_render_mode_label_follows_focus() {
     let mut app = App::new();
 
@@ -353,4 +406,60 @@ fn test_render_mode_label_follows_focus() {
         !output_frame.contains("INSERT"),
         "input label should be hidden while another pane is focused"
     );
+}
+
+#[test]
+fn test_hide_info_keeps_definitions_in_output() {
+    let mut app = App::new();
+
+    type_line(&mut app, "f(x)=x^2");
+    type_line(&mut app, "x=3");
+    type_line(&mut app, "hide info");
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        frame.contains("f(x) = x^2"),
+        "function definition missing: {frame}"
+    );
+    assert!(frame.contains("x = 3"), "variable definition missing: {frame}");
+    assert!(
+        !frame.contains("> f(x)=x^2"),
+        "echo should be hidden: {frame}"
+    );
+    assert!(
+        !frame.contains("hide info"),
+        "status line should be hidden: {frame}"
+    );
+}
+
+#[test]
+fn test_clear_info_keeps_definitions() {
+    let mut app = App::new();
+
+    type_line(&mut app, "g(y)=2*y");
+    type_line(&mut app, "clear info");
+
+    let texts = app.output_texts();
+
+    assert!(
+        texts.iter().any(|line| line.contains("g(y) = 2y")),
+        "{:?}",
+        texts
+    );
+    assert!(!texts.iter().any(|line| line.starts_with("> ")), "{:?}", texts);
+}
+
+#[test]
+fn test_hide_info_with_expression_result_folds_origin() {
+    let mut app = App::new();
+
+    type_line(&mut app, "y=4");
+    type_line(&mut app, "y^2");
+    type_line(&mut app, "hide info");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("y = 4"), "definition missing: {frame}");
+    assert!(frame.contains("y^2 = 16"), "folded result missing: {frame}");
 }

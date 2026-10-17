@@ -47,8 +47,8 @@ pub fn format_outcome(outcome: Outcome) -> String {
     match outcome {
         Outcome::Value(value) => format!("= {}", format_number(value)),
         Outcome::Exact(value) => format!("= {}", value),
-        Outcome::VariableDefined(name) => format!("{} defined", name),
-        Outcome::FunctionDefined(name) => format!("{} defined", name),
+        Outcome::VariableDefined(definition) => definition,
+        Outcome::FunctionDefined(definition) => definition,
         Outcome::Source(source) => format!("= {}", source),
     }
 }

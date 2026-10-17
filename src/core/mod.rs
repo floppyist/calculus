@@ -24,6 +24,9 @@ pub enum Token {
     Mul,
     Div,
     Pow,
+    // Reductions
+    Sum,
+    Product,
     // Assignment and argument separator
     Assign,
     Comma,
@@ -45,6 +48,8 @@ impl fmt::Display for Token {
             Token::Mul => "MUL".to_string(),
             Token::Div => "DIV".to_string(),
             Token::Pow => "POW".to_string(),
+            Token::Sum => "SUM".to_string(),
+            Token::Product => "PRODUCT".to_string(),
             Token::Assign => "ASSIGN".to_string(),
             Token::Comma => "COMMA".to_string(),
             Token::Lparen => "LPAREN".to_string(),

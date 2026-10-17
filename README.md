@@ -54,6 +54,7 @@ The application provides an interactive terminal interface as well as a line-ori
 * Definite integration using symbolic antiderivatives when available.
 * Numerical definite integration using composite Simpson's rule when no supported symbolic antiderivative is found.
 * Symbolic inverse transformations for supported function expressions.
+* Finite sums and products (`sum`, `prod`, `∑`, `∏`) over an integer range.
 
 ### Terminal Interface
 * Interactive terminal application.
@@ -189,6 +190,17 @@ For example:
 
 *(Circular variable dependencies are rejected.)*
 
+The Variables pane also lists the built-in constants: `pi`, `e`, and the integration constant letters currently used by stored functions. They are shown with a `[const]` tag; a constant you assign becomes a normal variable and is shown as `[custom]`:
+
+```text
+> e = 2
+> e
+= 2
+
+```
+
+The two-letter constant `pi` cannot be redefined (this is a documented limitation of the single-letter variable store), while `e` can.
+
 ### Defining Functions
 
 Define a function by writing its name, parameter list, and expression:
@@ -263,18 +275,28 @@ Use `integrate`, `integral`, or `int` for integration.
 ```
 
 
-When a symbolic antiderivative is available, Calculus creates a new function representing it. The integration constant is not stored as a separate parameter; the displayed result indicates the conventional $+ C$.
-For example, the mathematical result is:
+When a symbolic antiderivative is available, Calculus creates a new function representing it and appends its own integration constant, drawn from the letters `C D F G H J K L M N P Q R S T U V W X Y Z` (one letter per antiderivative). The constant defaults to zero and can be set like any variable, which recomputes every function that uses it. For example:
 
 $$\int x^2 \, dx = \frac{x^3}{3} + C$$
+
+```text
+> int x^2
+f(x) = 1/3*x^3 + C
+
+> int x^3
+g(x) = 1/4*x^4 + D
+
+> C = 5
+> f(0)
+= 5
+```
 
 
 * **Integration with respect to another variable:**
 
 ```text
 > int x*y, y
-f(y) = 0.5(xy^2)   (+ C)
-
+f(y) = 1/2*xy^2 + C
 ```
 
 
@@ -295,7 +317,7 @@ $$\int_{0}^{3} x^2 \, dx = 9$$
 
 
 
-The implementation first attempts symbolic integration. If no supported antiderivative is found, it uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
+Symbolic integration covers polynomials (including negative powers such as `1/x^2`), linear inner functions, the elementary functions, the substitution rule $f'(x)\,g(f(x))$, and integration by parts driven by a polynomial factor (for instance `int (2x+1)*e^(2x)`). If no supported antiderivative is found, definite integration uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
 
 ### Solving Equations
 
@@ -312,6 +334,24 @@ x = -1
 ```
 
 Linear equations with symbolic coefficients and quadratic equations with numeric coefficients are supported. Quadratic roots are reported exactly when possible (as fractions) and otherwise in a symbolic square-root form; unsupported degrees return an error.
+
+### Sums and Products
+
+Use `sum` and `prod` to reduce an expression over an integer range. The first argument is the index variable, the next two are the lower and upper bound, and the last is the term:
+
+```text
+> sum(k, 1, 5, k)
+= 15
+
+> prod(k, 1, 5, k)
+= 120
+
+> sum(k, 1, 10, k^2)
+= 385
+
+```
+
+The Unicode symbols `∑` and `∏` are accepted as aliases: `∑(k, 1, 4, k)` is the same as `sum(k, 1, 4, k)`. The index is bound locally, so it does not leak into the environment, and the bounds are evaluated as `ceil`/`floor` pairs; an empty range yields `0` for `sum` and `1` for `prod`. Bounds and the term may reference ordinary variables, so `n = 4` then `sum(k, 1, n, k)` gives `10` and recomputes when `n` changes.
 
 ### Printing Definitions
 
@@ -334,7 +374,7 @@ In interactive mode, individual panes can be toggled:
 
 ```
 
-Supported pane names are `plot`, `vars`, `funcs`, `info`, and `all`.
+Supported pane names are `plot`, `vars`, `funcs`, `info`, and `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`).
 
 ### Command Reference
 
@@ -394,7 +434,7 @@ Implicit multiplication is also supported:
 | `pi` | Mathematical constant $\pi$ |
 | `PI` | Alternative notation for $\pi$ |
 | `π` | Alternative notation for $\pi$ |
-| `e` | Euler's number |
+| `e` | Euler's number (can be shadowed by assigning to `e`) |
 
 ### Precedence
 
@@ -506,7 +546,7 @@ Integration supports symbolic antiderivatives for a subset of expressions, inclu
 
 ### Equation Solving
 
-The `solve` command supports linear equations (including symbolic coefficients) and quadratic equations with numeric coefficients. Linear solutions are produced symbolically; quadratic solutions are reported as exact fractions when the discriminant has a rational square root, and otherwise in a square-root form. Higher-degree equations are not supported.
+The `solve` command supports linear equations (including symbolic coefficients) and quadratic equations with numeric coefficients. Linear solutions are produced symbolically; quadratic solutions are reported as exact fractions when the discriminant has a rational square root, and otherwise in a square-root form. When no symbolic solution is available, Calculus falls back to a numeric search: it scans a geometric grid for sign changes and refines each bracket by bisection, so equations such as `solve ln(x) = 10, x` return a decimal root.
 
 ### Inverse Expressions
 

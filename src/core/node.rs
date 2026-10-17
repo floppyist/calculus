@@ -27,6 +27,10 @@ pub enum Node {
 
     // User function call: name + arguments
     Call(String, Vec<Node>),
+
+    // Reductions: index variable, lower bound, upper bound, body
+    Sum(char, Box<Node>, Box<Node>, Box<Node>),
+    Product(char, Box<Node>, Box<Node>, Box<Node>),
 }
 
 // Evaluation context: current variable values and known functions
@@ -89,6 +93,65 @@ impl Node {
 
                 body.evaluate(&child)
             }
+
+            Node::Sum(index, lower, upper, body) => {
+                reduce(ctx, *index, lower, upper, body, 0.0, |acc, value| {
+                    acc + value
+                })
+            }
+
+            Node::Product(index, lower, upper, body) => {
+                reduce(ctx, *index, lower, upper, body, 1.0, |acc, value| {
+                    acc * value
+                })
+            }
         }
     }
+}
+
+// Evaluates a summation or product over integer bounds
+fn reduce(
+    ctx: &EvalContext,
+    index: char,
+    lower: &Node,
+    upper: &Node,
+    body: &Node,
+    identity: f64,
+    combine: fn(f64, f64) -> f64,
+) -> f64 {
+    let lo = lower.evaluate(ctx).ceil();
+    let hi = upper.evaluate(ctx).floor();
+
+    if !lo.is_finite() || !hi.is_finite() {
+        return f64::NAN;
+    }
+
+    if hi < lo {
+        return identity;
+    }
+
+    if hi - lo + 1.0 > 1_000_000.0 {
+        return f64::NAN;
+    }
+
+    let mut accumulator = identity;
+    let mut value = lo;
+
+    while value <= hi {
+        let mut local = ctx.variables.clone();
+
+        local.insert(index, value);
+
+        let child = EvalContext {
+            variables: &local,
+            functions: ctx.functions,
+            depth: ctx.depth,
+        };
+
+        accumulator = combine(accumulator, body.evaluate(&child));
+
+        value += 1.0;
+    }
+
+    accumulator
 }

@@ -36,19 +36,25 @@ impl fmt::Display for TokenizerError {
     }
 }
 
-pub fn tokenize(raw_input: &str, known_functions: &[String]) -> Result<Vec<Token>, TokenizerError> {
-    tokenize_internal(raw_input, known_functions, false)
+// Letters the user has defined shadow the named constants (`e`)
+pub fn tokenize(
+    raw_input: &str,
+    known_functions: &[String],
+    known_variables: &[char],
+) -> Result<Vec<Token>, TokenizerError> {
+    tokenize_internal(raw_input, known_functions, false, known_variables)
 }
 
 // For an assignment target: unknown names before '(' count as functions
 pub fn tokenize_definition_side(raw_input: &str) -> Result<Vec<Token>, TokenizerError> {
-    tokenize_internal(raw_input, &[], true)
+    tokenize_internal(raw_input, &[], true, &[])
 }
 
 fn tokenize_internal(
     raw_input: &str,
     known_functions: &[String],
     definition_mode: bool,
+    known_variables: &[char],
 ) -> Result<Vec<Token>, TokenizerError> {
     let input = preprocess(raw_input);
 
@@ -87,13 +93,30 @@ fn tokenize_internal(
 
                 if let Some(f) = may_function {
                     result.push(Token::Function(f));
+                } else if !may_user_function
+                    && let Some(name) =
+                        single_variable(&state_string, definition_mode, known_variables)
+                {
+                    // A letter the user defined (or any target letter) wins over `e`
+                    result.push(Token::Variable(name));
                 } else if let Some(value) = get_constant(&state_string) {
                     result.push(Token::Float(value));
+                } else if followed_by_lparen && is_sum_name(&state_string) {
+                    // sum( is a reduction, not an unknown user function
+                    result.push(Token::Sum);
+                } else if followed_by_lparen && is_product_name(&state_string) {
+                    result.push(Token::Product);
                 } else if may_user_function {
                     result.push(Token::UserFunction(state_string.clone()));
+                } else if followed_by_lparen
+                    && let Some((prefix, function)) = split_function_suffix(&state_string)
+                {
+                    // 'xsin(' peels to x * sin(...) instead of x*s*i*n*(...)
+                    push_split(&mut result, prefix, definition_mode, known_variables);
+                    result.push(Token::Function(function));
                 } else {
                     // Unknown name: split back so "x2" becomes x*2
-                    push_split(&mut result, &state_string);
+                    push_split(&mut result, &state_string, definition_mode, known_variables);
                 }
 
                 state_string.clear();
@@ -131,6 +154,21 @@ fn tokenize_internal(
                     '=' => result.push(Token::Assign),
                     ',' => result.push(Token::Comma),
                     'π' => result.push(Token::Float(std::f64::consts::PI)),
+                    '∑' | '∏' => {
+                        // Only valid directly before '('; the '(' is handled next
+                        let mut lookahead = chars.clone();
+                        lookahead.next();
+
+                        if lookahead.peek() != Some(&'(') {
+                            return Err(TokenizerError::UndefinedSymbol(c));
+                        }
+
+                        result.push(if c == '∑' {
+                            Token::Sum
+                        } else {
+                            Token::Product
+                        });
+                    }
                     _ => {
                         return Err(TokenizerError::UndefinedSymbol(c));
                     }
@@ -200,8 +238,50 @@ fn get_function(input: &str) -> Option<Function> {
     }
 }
 
+// Reductions: sum(k, a, b, expr) / prod(k, a, b, expr), plus ∑ / ∏
+fn is_sum_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("sum")
+}
+
+fn is_product_name(name: &str) -> bool {
+    name.eq_ignore_ascii_case("prod")
+}
+
+// For an unknown identifier before '(' peel a trailing builtin: xsin( -> x*sin(
+fn split_function_suffix(name: &str) -> Option<(&str, Function)> {
+    for (index, _) in name.char_indices().skip(1) {
+        if let Some(function) = get_function(&name[index..]) {
+            return Some((&name[..index], function));
+        }
+    }
+
+    None
+}
+
+// A single letter that must be read as a variable: always on the definition
+// side, otherwise only when the user has already defined it (shadowing `e`)
+fn single_variable(name: &str, definition_mode: bool, known_variables: &[char]) -> Option<char> {
+    let mut chars = name.chars();
+    let c = chars.next()?;
+
+    if chars.next().is_some() {
+        return None;
+    }
+
+    if definition_mode || known_variables.contains(&c) {
+        Some(c)
+    } else {
+        None
+    }
+}
+
 // Splits an unrecognized identifier back into variable and number tokens
-fn push_split(result: &mut Vec<Token>, name: &str) {
+fn push_split(
+    result: &mut Vec<Token>,
+    name: &str,
+    definition_mode: bool,
+    known_variables: &[char],
+) {
     let mut digits = String::new();
 
     for c in name.chars() {
@@ -217,9 +297,13 @@ fn push_split(result: &mut Vec<Token>, name: &str) {
         }
         digits.clear();
 
-        match get_constant(&c.to_string()) {
-            Some(value) => result.push(Token::Float(value)),
-            None => result.push(Token::Variable(c)),
+        if definition_mode || known_variables.contains(&c) {
+            result.push(Token::Variable(c));
+        } else {
+            match get_constant(&c.to_string()) {
+                Some(value) => result.push(Token::Float(value)),
+                None => result.push(Token::Variable(c)),
+            }
         }
     }
 
@@ -287,6 +371,7 @@ fn convert_to_preintercept_token(token: &Token) -> PreinterceptToken {
         Token::Variable(_) => PreinterceptToken::Variable,
         Token::Function(_) => PreinterceptToken::Function,
         Token::UserFunction(_) => PreinterceptToken::Function,
+        Token::Sum | Token::Product => PreinterceptToken::Function,
         Token::Int(_) => PreinterceptToken::Number,
         Token::Float(_) => PreinterceptToken::Number,
         Token::Plus => PreinterceptToken::Irrelevant,

@@ -105,7 +105,7 @@ fn test_simplify_cancels_common_factors() {
 
 #[test]
 fn test_simplify_keeps_exact_ratio() {
-    assert_eq!(simplified("x^3/3"), "x^3/3");
+    assert_eq!(simplified("x^3/3"), "1/3*x^3");
 }
 
 #[test]
@@ -149,19 +149,37 @@ fn test_derivative_rejects_piecewise() {
 
 #[test]
 fn test_antiderivative_power() {
-    assert_eq!(antiderivative("x^2"), "x^3/3");
-    assert_eq!(antiderivative("2*x"), "x^2");
+    assert_eq!(antiderivative("x^2"), "1/3*x^3 + C");
+    assert_eq!(antiderivative("2*x"), "x^2 + C");
 }
 
 #[test]
 fn test_antiderivative_trig() {
-    assert_eq!(antiderivative("cos(x)"), "sin(x)");
-    assert_eq!(antiderivative("cos(2*x)"), "sin(2x)/2");
+    assert_eq!(antiderivative("cos(x)"), "sin(x) + C");
+    assert_eq!(antiderivative("cos(2*x)"), "1/2*sin(2x) + C");
 }
 
 #[test]
 fn test_antiderivative_reciprocal() {
-    assert_eq!(antiderivative("1/x"), "ln(abs(x))");
+    assert_eq!(antiderivative("1/x"), "ln(abs(x)) + C");
+}
+
+#[test]
+fn test_antiderivative_negative_power() {
+    assert_eq!(antiderivative("1/x^2"), "-x^-1 + C");
+    assert_eq!(antiderivative("1/(2*x+1)^2"), "-1/2*(2x + 1)^-1 + C");
+}
+
+#[test]
+fn test_antiderivative_substitution() {
+    assert_eq!(antiderivative("e^x*sin(e^x)"), "-cos(e^x) + C");
+    assert_eq!(antiderivative("2*x*cos(x^2)"), "sin(x^2) + C");
+}
+
+#[test]
+fn test_antiderivative_by_parts() {
+    assert_eq!(antiderivative("(2*x+1)*e^(2*x)"), "e^(2x)*x + C");
+    assert_eq!(antiderivative("x*e^(2*x)"), "1/2*e^(2x)*x - 1/4*e^(2x) + C");
 }
 
 #[test]
@@ -207,7 +225,7 @@ fn test_integrate_stores_auto_named_function() {
         } => {
             assert_eq!(name, "f");
             assert_eq!(param, 'x');
-            assert_eq!(source, "x^3/3");
+            assert_eq!(source, "1/3*x^3 + C");
         }
         IntegralOutcome::Value(_) => panic!("expected a function"),
     }
@@ -225,9 +243,35 @@ fn test_integrate_function_call() {
     let outcome = environment.integrate("f(x)", None, None).unwrap();
 
     match outcome {
-        IntegralOutcome::Function { source, .. } => assert_eq!(source, "x^2"),
+        IntegralOutcome::Function { source, .. } => assert_eq!(source, "x^2 + C"),
         IntegralOutcome::Value(_) => panic!("expected a function"),
     }
+}
+
+#[test]
+fn test_integration_constants_use_distinct_letters() {
+    let mut environment = Environment::new();
+
+    let first = environment.integrate("x^2", None, None).unwrap();
+
+    match first {
+        IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/3*x^3 + C"),
+        IntegralOutcome::Value(_) => panic!("expected a function"),
+    }
+
+    let second = environment.integrate("x", None, None).unwrap();
+
+    match second {
+        IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/2*x^2 + D"),
+        IntegralOutcome::Value(_) => panic!("expected a function"),
+    }
+
+    // Setting the constant changes every antiderivative that uses it
+    environment.execute("C=5").unwrap();
+
+    let value = environment.execute("f(0)").unwrap();
+
+    assert_eq!(crate::ui::format::format_outcome(value), "= 5");
 }
 
 #[test]
@@ -285,13 +329,27 @@ fn test_solve_rejects_unsupported() {
     let environment = Environment::new();
 
     assert!(matches!(
-        environment.solve("x^3=8", 'x').unwrap_err(),
+        environment.solve("e^x=0", 'x').unwrap_err(),
         EvalError::NotSolvable
     ));
     assert!(matches!(
         environment.solve("2x=2x+1", 'x').unwrap_err(),
         EvalError::NotSolvable
     ));
+}
+
+#[test]
+fn test_solve_numeric_fallback() {
+    let environment = Environment::new();
+
+    let cubic = environment.solve("x^3=8", 'x').expect("solve failed");
+
+    assert_eq!(cubic.solutions, vec!["2".to_string()]);
+
+    let logarithmic = environment.solve("ln(x)=10", 'x').expect("solve failed");
+    let value: f64 = logarithmic.solutions[0].parse().expect("numeric root");
+
+    assert!((value - 10f64.exp()).abs() < 1e-6);
 }
 
 #[test]
@@ -466,4 +524,26 @@ fn test_inverse_rejects_unknown() {
     let result = environment.execute("min(x,2)^-1");
 
     assert!(matches!(result.unwrap_err(), EvalError::NotInvertible));
+}
+
+#[test]
+fn test_sum_and_product_rendering_roundtrip() {
+    assert_eq!(source("sum(k,1,3,k)"), "∑(k, 1, 3, k)");
+    assert_eq!(source("prod(k,1,3,k)"), "∏(k, 1, 3, k)");
+    assert_eq!(source("∑(k,1,3,k^2)"), "∑(k, 1, 3, k^2)");
+    assert_eq!(source("∏(k,1,4,k)"), "∏(k, 1, 4, k)");
+}
+
+#[test]
+fn test_sum_and_product_simplify_keeps_structure() {
+    assert_eq!(simplified("sum(k,1,3,k*x)"), "∑(k, 1, 3, kx)");
+    assert_eq!(simplified("prod(k,1,3,k)*x"), "x*∏(k, 1, 3, k)");
+}
+
+#[test]
+fn test_sum_and_product_derivatives() {
+    assert_eq!(derivative("sum(k,1,3,k*x)"), "∑(k, 1, 3, k)");
+    assert_eq!(derivative("sum(k,1,3,k*x^2)"), "∑(k, 1, 3, 2kx)");
+    assert_eq!(derivative("prod(k,1,3,k)"), "0");
+    assert_eq!(derivative("sum(k,1,3,k*x)"), "∑(k, 1, 3, k)");
 }

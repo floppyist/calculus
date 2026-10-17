@@ -50,7 +50,12 @@ fn render_inner(node: &Node) -> (String, u8) {
             let left_text = render(left, P_MUL);
             let right_text = render(right, P_MUL + 1);
 
-            if !ends_in_exponent(left) && mul_join_safe(&left_text, &right_text, right) {
+            let left_is_fraction = matches!(&**left, Node::Div(..));
+
+            if !left_is_fraction
+                && !ends_in_exponent(left)
+                && mul_join_safe(&left_text, &right_text, right)
+            {
                 (format!("{}{}", left_text, right_text), P_MUL)
             } else {
                 (format!("{}*{}", left_text, right_text), P_MUL)
@@ -79,7 +84,25 @@ fn render_inner(node: &Node) -> (String, u8) {
 
         Node::Builtin(function, arguments) => (render_call(function.name(), arguments), P_ATOM),
         Node::Call(name, arguments) => (render_call(name, arguments), P_ATOM),
+
+        Node::Sum(index, lower, upper, body) => {
+            (render_reduction('∑', *index, lower, upper, body), P_ATOM)
+        }
+        Node::Product(index, lower, upper, body) => {
+            (render_reduction('∏', *index, lower, upper, body), P_ATOM)
+        }
     }
+}
+
+fn render_reduction(symbol: char, index: char, lower: &Node, upper: &Node, body: &Node) -> String {
+    format!(
+        "{}({}, {}, {}, {})",
+        symbol,
+        index,
+        to_source(lower),
+        to_source(upper),
+        to_source(body)
+    )
 }
 
 fn render_call(name: &str, arguments: &[Node]) -> String {
@@ -228,6 +251,137 @@ fn fits_i64(value: i128) -> bool {
     value >= i64::MIN as i128 && value <= i64::MAX as i128
 }
 
+// An exact fraction as a node, used for coefficient literals
+fn fraction(numerator: i128, denominator: i128) -> Node {
+    rational_to_node(
+        Rational::new(numerator, denominator).unwrap_or_else(|| Rational::from_integer(0)),
+    )
+}
+
+// A term coefficient: exact whenever it came from integers or a small
+// fraction, a float only for pi, e and awkward decimals
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Coeff {
+    Rational(Rational),
+    Float(f64),
+}
+
+impl Coeff {
+    fn from_i128(value: i128) -> Coeff {
+        Coeff::Rational(Rational::from_integer(value))
+    }
+
+    fn one() -> Coeff {
+        Coeff::from_i128(1)
+    }
+
+    fn is_zero(self) -> bool {
+        match self {
+            Coeff::Rational(rational) => rational.numerator() == 0,
+            Coeff::Float(value) => value == 0.0,
+        }
+    }
+
+    fn is_one(self) -> bool {
+        match self {
+            Coeff::Rational(rational) => rational.is_integer() && rational.numerator() == 1,
+            Coeff::Float(value) => value == 1.0,
+        }
+    }
+
+    fn is_negative_one(self) -> bool {
+        match self {
+            Coeff::Rational(rational) => rational.is_integer() && rational.numerator() == -1,
+            Coeff::Float(value) => value == -1.0,
+        }
+    }
+
+    fn is_negative(self) -> bool {
+        match self {
+            Coeff::Rational(rational) => rational.numerator() < 0,
+            Coeff::Float(value) => value < 0.0,
+        }
+    }
+
+    fn to_f64(self) -> f64 {
+        match self {
+            Coeff::Rational(rational) => rational.to_f64(),
+            Coeff::Float(value) => value,
+        }
+    }
+
+    fn to_node(self) -> Node {
+        match self {
+            Coeff::Rational(rational) => rational_to_node(rational),
+            Coeff::Float(value) => number(value),
+        }
+    }
+
+    fn neg(self) -> Coeff {
+        match self {
+            Coeff::Rational(rational) => Coeff::Rational(rational.neg()),
+            Coeff::Float(value) => Coeff::Float(-value),
+        }
+    }
+
+    fn add(self, other: Coeff) -> Coeff {
+        match (self, other) {
+            (Coeff::Rational(left), Coeff::Rational(right)) => left
+                .add(right)
+                .map(Coeff::Rational)
+                .unwrap_or_else(|| Coeff::Float(left.to_f64() + right.to_f64())),
+            _ => Coeff::Float(self.to_f64() + other.to_f64()),
+        }
+    }
+
+    fn mul(self, other: Coeff) -> Coeff {
+        match (self, other) {
+            (Coeff::Rational(left), Coeff::Rational(right)) => left
+                .mul(right)
+                .map(Coeff::Rational)
+                .unwrap_or_else(|| Coeff::Float(left.to_f64() * right.to_f64())),
+            _ => Coeff::Float(self.to_f64() * other.to_f64()),
+        }
+    }
+
+    fn div(self, other: Coeff) -> Coeff {
+        match (self, other) {
+            (Coeff::Rational(left), Coeff::Rational(right)) => left
+                .div(right)
+                .map(Coeff::Rational)
+                .unwrap_or_else(|| Coeff::Float(left.to_f64() / right.to_f64())),
+            _ => Coeff::Float(self.to_f64() / other.to_f64()),
+        }
+    }
+}
+
+// Decimals only join the exact path when they reduce to a small fraction
+const MAX_COEFFICIENT: i128 = 100;
+
+fn is_small(rational: Rational) -> bool {
+    rational.numerator().unsigned_abs() as i128 <= MAX_COEFFICIENT
+        && rational.denominator() <= MAX_COEFFICIENT
+}
+
+fn as_coefficient(node: &Node) -> Option<Coeff> {
+    match node {
+        Node::IntNumber(value) => Some(Coeff::from_i128(*value as i128)),
+        Node::FloatNumber(value) => {
+            if *value == std::f64::consts::PI || *value == std::f64::consts::E {
+                return Some(Coeff::Float(*value));
+            }
+
+            Some(
+                Rational::from_decimal(*value)
+                    .filter(|rational| is_small(*rational))
+                    .map(Coeff::Rational)
+                    .unwrap_or(Coeff::Float(*value)),
+            )
+        }
+        _ => fold_rational(node).map(Coeff::Rational),
+    }
+}
+
 fn add(left: Node, right: Node) -> Node {
     Node::Add(Box::new(left), Box::new(right))
 }
@@ -289,6 +443,12 @@ fn is_unit(node: &Node) -> bool {
     matches!(node, Node::IntNumber(1))
 }
 
+// A term that has no variable structure: a bare number or a lone uppercase
+// letter (the integration constants), both sorted to the end of a sum
+fn is_constant_term(node: &Node) -> bool {
+    is_unit(node) || matches!(node, Node::Variable(name) if name.is_ascii_uppercase())
+}
+
 // True when the expression references the variable
 pub fn has_var(node: &Node, name: char) -> bool {
     match node {
@@ -302,6 +462,9 @@ pub fn has_var(node: &Node, name: char) -> bool {
         | Node::Pow(left, right) => has_var(left, name) || has_var(right, name),
         Node::Builtin(_, arguments) | Node::Call(_, arguments) => {
             arguments.iter().any(|argument| has_var(argument, name))
+        }
+        Node::Sum(index, lower, upper, body) | Node::Product(index, lower, upper, body) => {
+            *index != name && (has_var(lower, name) || has_var(upper, name) || has_var(body, name))
         }
     }
 }
@@ -349,7 +512,32 @@ pub fn substitute(node: &Node, replacements: &HashMap<char, Node>) -> Node {
                 .map(|argument| substitute(argument, replacements))
                 .collect(),
         ),
+        Node::Sum(index, lower, upper, body) => Node::Sum(
+            *index,
+            Box::new(substitute(lower, replacements)),
+            Box::new(substitute(upper, replacements)),
+            Box::new(substitute_shadowed(body, replacements, *index)),
+        ),
+        Node::Product(index, lower, upper, body) => Node::Product(
+            *index,
+            Box::new(substitute(lower, replacements)),
+            Box::new(substitute(upper, replacements)),
+            Box::new(substitute_shadowed(body, replacements, *index)),
+        ),
     }
+}
+
+// Substitution inside a reduction body must not capture the bound index
+fn substitute_shadowed(node: &Node, replacements: &HashMap<char, Node>, index: char) -> Node {
+    if !replacements.contains_key(&index) {
+        return substitute(node, replacements);
+    }
+
+    let mut scoped = replacements.clone();
+
+    scoped.remove(&index);
+
+    substitute(node, &scoped)
 }
 
 // --- simplification ----------------------------------------------------
@@ -374,6 +562,18 @@ pub fn simplify(node: &Node) -> Node {
         Node::Call(name, arguments) => {
             Node::Call(name.clone(), arguments.iter().map(simplify).collect())
         }
+        Node::Sum(index, lower, upper, body) => Node::Sum(
+            *index,
+            Box::new(simplify(lower)),
+            Box::new(simplify(upper)),
+            Box::new(simplify(body)),
+        ),
+        Node::Product(index, lower, upper, body) => Node::Product(
+            *index,
+            Box::new(simplify(lower)),
+            Box::new(simplify(upper)),
+            Box::new(simplify(body)),
+        ),
     }
 }
 
@@ -389,7 +589,7 @@ fn simplify_neg(inner: Node) -> Node {
 }
 
 // Collects additive terms as (coefficient, base) pairs, honouring the sign
-fn collect_terms(node: &Node, sign: f64, out: &mut Vec<(f64, Node)>) {
+fn collect_terms(node: &Node, sign: Coeff, out: &mut Vec<(Coeff, Node)>) {
     match node {
         Node::Add(left, right) => {
             collect_terms(left, sign, out);
@@ -397,45 +597,45 @@ fn collect_terms(node: &Node, sign: f64, out: &mut Vec<(f64, Node)>) {
         }
         Node::Sub(left, right) => {
             collect_terms(left, sign, out);
-            collect_terms(right, -sign, out);
+            collect_terms(right, sign.neg(), out);
         }
-        Node::Neg(inner) => collect_terms(inner, -sign, out),
+        Node::Neg(inner) => collect_terms(inner, sign.neg(), out),
         _ => {
             let (coefficient, base) = split_coefficient(node);
 
-            out.push((sign * coefficient, base));
+            out.push((sign.mul(coefficient), base));
         }
     }
 }
 
 // Splits a multiplicative term into its numeric coefficient and symbolic base
-fn split_coefficient(node: &Node) -> (f64, Node) {
+fn split_coefficient(node: &Node) -> (Coeff, Node) {
     match node {
         Node::Neg(inner) => {
             let (coefficient, base) = split_coefficient(inner);
 
-            (-coefficient, base)
+            (coefficient.neg(), base)
         }
         Node::Mul(_, _) => {
             let mut factors = Vec::new();
 
             flatten_factors(node, &mut factors);
 
-            let mut coefficient = 1.0;
+            let mut coefficient = Coeff::one();
             let mut symbolic = Vec::new();
 
             for factor in factors {
-                match as_number(&factor) {
-                    Some(value) => coefficient *= value,
+                match as_coefficient(&factor) {
+                    Some(value) => coefficient = coefficient.mul(value),
                     None => symbolic.push(factor),
                 }
             }
 
             (coefficient, combine_factors(symbolic))
         }
-        _ => match as_number(node) {
+        _ => match as_coefficient(node) {
             Some(value) => (value, number(1.0)),
-            None => (1.0, node.clone()),
+            None => (Coeff::one(), node.clone()),
         },
     }
 }
@@ -476,27 +676,27 @@ fn combine_factors(factors: Vec<Node>) -> Node {
 
     let product = bases_to_node(bases);
 
-    if coefficient == 1.0 {
+    if coefficient.is_one() {
         product
     } else {
-        mul(number(coefficient), product)
+        mul(coefficient.to_node(), product)
     }
 }
 
 // Splits a flat factor list into a numeric coefficient and (base, exponent) pairs
-fn decompose_product(nodes: Vec<Node>) -> (f64, Vec<(String, Node, f64)>) {
+fn decompose_product(nodes: Vec<Node>) -> (Coeff, Vec<(String, Node, f64)>) {
     let mut factors = Vec::new();
 
     for node in nodes {
         flatten_factors(&node, &mut factors);
     }
 
-    let mut coefficient = 1.0;
+    let mut coefficient = Coeff::one();
     let mut bases: Vec<(String, Node, f64)> = Vec::new();
 
     for factor in factors {
-        if let Some(value) = as_number(&factor) {
-            coefficient *= value;
+        if let Some(value) = as_coefficient(&factor) {
+            coefficient = coefficient.mul(value);
             continue;
         }
 
@@ -555,6 +755,18 @@ fn expand(node: &Node) -> Node {
         Node::Call(name, arguments) => {
             Node::Call(name.clone(), arguments.iter().map(expand).collect())
         }
+        Node::Sum(index, lower, upper, body) => Node::Sum(
+            *index,
+            Box::new(expand(lower)),
+            Box::new(expand(upper)),
+            Box::new(expand(body)),
+        ),
+        Node::Product(index, lower, upper, body) => Node::Product(
+            *index,
+            Box::new(expand(lower)),
+            Box::new(expand(upper)),
+            Box::new(expand(body)),
+        ),
     }
 }
 
@@ -576,37 +788,37 @@ fn distribute(left: Node, right: Node) -> Node {
 fn simplify_sum(left: &Node, right: &Node, subtract: bool) -> Node {
     let left = expand(left);
     let right = expand(right);
-    let mut terms: Vec<(f64, Node)> = Vec::new();
+    let mut terms: Vec<(Coeff, Node)> = Vec::new();
 
-    collect_terms(&left, 1.0, &mut terms);
+    collect_terms(&left, Coeff::one(), &mut terms);
     collect_terms(
         &right,
         if subtract {
-            -1.0
+            Coeff::one().neg()
         } else {
-            1.0
+            Coeff::one()
         },
         &mut terms,
     );
 
-    let mut grouped: Vec<(String, f64, Node)> = Vec::new();
+    let mut grouped: Vec<(String, Coeff, Node)> = Vec::new();
 
     for (coefficient, base) in terms {
         let key = to_source(&base);
 
         if let Some(entry) = grouped.iter_mut().find(|(other, _, _)| *other == key) {
-            entry.1 += coefficient;
+            entry.1 = entry.1.add(coefficient);
         } else {
             grouped.push((key, coefficient, base));
         }
     }
 
-    grouped.retain(|(_, coefficient, _)| *coefficient != 0.0);
+    grouped.retain(|(_, coefficient, _)| !coefficient.is_zero());
 
     // Like a classical polynomial: constants last, descending degree in x
     grouped.sort_by(|a, b| {
-        let a_constant = is_unit(&a.2);
-        let b_constant = is_unit(&b.2);
+        let a_constant = is_constant_term(&a.2);
+        let b_constant = is_constant_term(&b.2);
 
         a_constant
             .cmp(&b_constant)
@@ -663,11 +875,11 @@ fn total_degree(node: &Node) -> f64 {
     }
 }
 
-fn build_sum(grouped: Vec<(String, f64, Node)>) -> Node {
+fn build_sum(grouped: Vec<(String, Coeff, Node)>) -> Node {
     let mut result: Option<Node> = None;
 
     for (_, coefficient, base) in grouped {
-        if coefficient > 0.0 {
+        if !coefficient.is_negative() {
             let term = make_term(coefficient, base);
 
             result = Some(match result {
@@ -675,7 +887,7 @@ fn build_sum(grouped: Vec<(String, f64, Node)>) -> Node {
                 Some(accumulator) => add(accumulator, term),
             });
         } else {
-            let term = make_term(-coefficient, base);
+            let term = make_term(coefficient.neg(), base);
 
             result = Some(match result {
                 None => neg(term),
@@ -687,16 +899,16 @@ fn build_sum(grouped: Vec<(String, f64, Node)>) -> Node {
     result.unwrap_or_else(|| number(0.0))
 }
 
-fn make_term(coefficient: f64, base: Node) -> Node {
+fn make_term(coefficient: Coeff, base: Node) -> Node {
     if is_unit(&base) {
-        return number(coefficient);
+        return coefficient.to_node();
     }
 
-    if coefficient == 1.0 {
+    if coefficient.is_one() {
         return base;
     }
 
-    let mut factors = vec![number(coefficient)];
+    let mut factors = vec![coefficient.to_node()];
 
     flatten_factors(&base, &mut factors);
 
@@ -742,7 +954,7 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
     let (top_coefficient, top_bases) = decompose_product(numerator);
     let (bottom_coefficient, mut bottom_bases) = decompose_product(denominator);
 
-    if top_coefficient == 0.0 && bottom_coefficient != 0.0 {
+    if top_coefficient.is_zero() && !bottom_coefficient.is_zero() {
         return number(0.0);
     }
 
@@ -770,24 +982,26 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
     }
 
     if bottom_bases.is_empty() {
-        let (top_coefficient, bottom_coefficient) =
-        reduce_coefficients(top_coefficient, bottom_coefficient);
-
-        if bottom_coefficient == 1.0 {
-            return with_coefficient(top_coefficient, bases_to_node(remaining));
+        if bottom_coefficient.is_zero() {
+            return number(top_coefficient.to_f64() / 0.0);
         }
 
-        if remaining.is_empty() {
-            return number(top_coefficient / bottom_coefficient);
+        let base = bases_to_node(remaining);
+
+        // A fraction coefficient reads well in front of a single factor
+        // ('1/3*x^3'), but a sum keeps its division ('(y - 3)/2')
+        if matches!(base, Node::Add(..) | Node::Sub(..)) && !bottom_coefficient.is_one() {
+            return div(
+                with_coefficient(top_coefficient, base),
+                bottom_coefficient.to_node(),
+            );
         }
 
-        let top = with_coefficient(top_coefficient, bases_to_node(remaining));
-
-        return div(top, number(bottom_coefficient));
+        return with_coefficient(top_coefficient.div(bottom_coefficient), base);
     }
 
     let (top_coefficient, bottom_coefficient) =
-    reduce_coefficients(top_coefficient, bottom_coefficient);
+        reduce_coefficients(top_coefficient, bottom_coefficient);
 
     let top = with_coefficient(top_coefficient, bases_to_node(remaining));
     let bottom = with_coefficient(bottom_coefficient, bases_to_node(bottom_bases));
@@ -796,37 +1010,35 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
 }
 
 // Attaches a numeric coefficient to a node, keeping readable forms
-fn with_coefficient(coefficient: f64, node: Node) -> Node {
+fn with_coefficient(coefficient: Coeff, node: Node) -> Node {
     if is_unit(&node) {
-        return number(coefficient);
+        return coefficient.to_node();
     }
 
-    if coefficient == 1.0 {
+    if coefficient.is_one() {
         return node;
     }
 
-    if coefficient == -1.0 {
+    if coefficient.is_negative_one() {
         return neg(node);
     }
 
-    mul(number(coefficient), node)
+    mul(coefficient.to_node(), node)
 }
 
-// Cancels a common integer divisor out of a coefficient pair
-fn reduce_coefficients(top: f64, bottom: f64) -> (f64, f64) {
-    if top == 0.0 || bottom == 0.0 {
+// Splits an exact coefficient ratio into its integer numerator and denominator
+fn reduce_coefficients(top: Coeff, bottom: Coeff) -> (Coeff, Coeff) {
+    if top.is_zero() || bottom.is_zero() {
         return (top, bottom);
     }
 
-    for factor in (2..=1024).rev() {
-        let divisor = factor as f64;
-
-        if (top / divisor).fract().abs() < 1e-9 && (bottom / divisor).fract().abs() < 1e-9 {
-            return (top / divisor, bottom / divisor);
-        }
+    match top.div(bottom) {
+        Coeff::Rational(ratio) => (
+            Coeff::from_i128(ratio.numerator()),
+            Coeff::from_i128(ratio.denominator()),
+        ),
+        Coeff::Float(_) => (top, bottom),
     }
-
-    (top, bottom)
 }
 
 fn simplify_power(base: Node, exponent: Node) -> Node {
@@ -864,7 +1076,7 @@ fn simplify_power(base: Node, exponent: Node) -> Node {
 
         // Roots cancel against whole powers: sqrt(u)^2 and cbrt(u)^3
         if let Node::Builtin(function, arguments) = &base
-        && let [argument] = arguments.as_slice()
+            && let [argument] = arguments.as_slice()
         {
             match function {
                 Function::Sqrt if power == 2.0 => return argument.clone(),
@@ -880,7 +1092,7 @@ fn simplify_power(base: Node, exponent: Node) -> Node {
 fn simplify_builtin(function: Function, arguments: Vec<Node>) -> Node {
     // Exact values worth keeping symbolic
     if let [argument] = arguments.as_slice()
-    && let Some(value) = as_number(argument)
+        && let Some(value) = as_number(argument)
     {
         if function == Function::Ln && value == std::f64::consts::E {
             return number(1.0);
@@ -1008,6 +1220,36 @@ fn diff(
             let expanded = substitute(body, &replacements);
 
             diff(&expanded, name, functions, depth + 1)
+        }
+
+        Node::Sum(index, lower, upper, body) => {
+            // The bound index is a dummy, so it never contributes a derivative
+            if *index == name {
+                return Some(number(0.0));
+            }
+
+            if has_var(lower, name) || has_var(upper, name) {
+                return None;
+            }
+
+            Some(Node::Sum(
+                *index,
+                lower.clone(),
+                upper.clone(),
+                Box::new(diff(body, name, functions, depth)?),
+            ))
+        }
+
+        Node::Product(index, lower, upper, body) => {
+            if *index == name {
+                return Some(number(0.0));
+            }
+
+            if has_var(lower, name) || has_var(upper, name) || has_var(body, name) {
+                return None;
+            }
+
+            Some(number(0.0))
         }
     }
 }
@@ -1166,7 +1408,7 @@ fn integral(
 
         Node::Variable(other) => {
             if *other == name {
-                Some(mul(number(0.5), pow(variable(name), number(2.0))))
+                power_antiderivative(variable(name), 1.0)
             } else {
                 Some(mul(node.clone(), variable(name)))
             }
@@ -1194,8 +1436,10 @@ fn integral(
                     (**right).clone(),
                     integral(left, name, functions, depth)?,
                 ))
+            } else if let Some(substituted) = integrate_substitution(node, name, functions) {
+                Some(substituted)
             } else {
-                None
+                integrate_by_parts(node, name, functions, depth)
             }
         }
 
@@ -1208,6 +1452,17 @@ fn integral(
             } else if !has_var(numerator, name) {
                 if is_variable(denominator, name) {
                     Some(mul((**numerator).clone(), ln(abs(variable(name)))))
+                } else if let Node::Pow(base, exponent) = &**denominator {
+                    if has_var(exponent, name) {
+                        None
+                    } else {
+                        let power = -as_number(exponent)?;
+
+                        Some(mul(
+                            (**numerator).clone(),
+                            integrate_linear_power(base, power, name)?,
+                        ))
+                    }
                 } else {
                     // a / (k*x + b) -> (a / k) * ln|k*x + b|
                     let (slope, _) = linear_coefficients(denominator, name)?;
@@ -1238,20 +1493,7 @@ fn integral(
                 ))
             } else {
                 // (k*x + b)^n
-                let (slope, _) = linear_coefficients(base, name)?;
-                let power = as_number(exponent)?;
-
-                if power == -1.0 {
-                    Some(mul(
-                        div(number(1.0), number(slope)),
-                        ln(abs((**base).clone())),
-                    ))
-                } else {
-                    Some(div(
-                        pow((**base).clone(), number(power + 1.0)),
-                        mul(number(power + 1.0), number(slope)),
-                    ))
-                }
+                integrate_linear_power(base, as_number(exponent)?, name)
             }
         }
 
@@ -1294,6 +1536,119 @@ fn power_antiderivative(base: Node, power: f64) -> Option<Node> {
     }
 }
 
+// Antiderivative of a power of a linear expression (k*x + b)^power
+fn integrate_linear_power(base: &Node, power: f64, name: char) -> Option<Node> {
+    let (slope, _) = linear_coefficients(base, name)?;
+
+    if power == -1.0 {
+        Some(mul(div(number(1.0), number(slope)), ln(abs(base.clone()))))
+    } else {
+        Some(div(
+            pow(base.clone(), number(power + 1.0)),
+            mul(number(power + 1.0), number(slope)),
+        ))
+    }
+}
+
+// Substitution rule: f'(x) * g(f(x)) integrates to G(f(x)) with G' = g
+fn integrate_substitution(
+    node: &Node,
+    name: char,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+) -> Option<Node> {
+    let mut factors = Vec::new();
+
+    flatten_factors(node, &mut factors);
+
+    for (index, factor) in factors.iter().enumerate() {
+        let (function, argument) = match factor {
+            Node::Builtin(function, arguments) if arguments.len() == 1 => {
+                (*function, &arguments[0])
+            }
+            _ => continue,
+        };
+
+        if !has_var(argument, name) {
+            continue;
+        }
+
+        let Some(derivative) = diff(argument, name, functions, 0) else {
+            continue;
+        };
+
+        let mut rest = factors.clone();
+
+        rest.remove(index);
+
+        let ratio = simplify(&div(build_product(rest), derivative));
+
+        if has_var(&ratio, name) {
+            continue;
+        }
+
+        let antiderivative = builtin_integral(function, argument.clone())?;
+
+        return Some(mul(ratio, antiderivative));
+    }
+
+    None
+}
+
+// Integration by parts, driven by a polynomial factor: u*v - integral(v*du)
+fn integrate_by_parts(
+    node: &Node,
+    name: char,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+    depth: usize,
+) -> Option<Node> {
+    let Node::Mul(left, right) = node else {
+        return None;
+    };
+
+    for (poly, other) in [(left, right), (right, left)] {
+        if !has_var(other, name) || !is_polynomial(poly, name) {
+            continue;
+        }
+
+        let Some(antiderivative) = integral(other, name, functions, depth + 1) else {
+            continue;
+        };
+
+        let Some(derivative) = diff(poly, name, functions, 0) else {
+            continue;
+        };
+
+        let derivative = simplify(&derivative);
+
+        let remainder = integral(
+            &mul(derivative, antiderivative.clone()),
+            name,
+            functions,
+            depth + 1,
+        );
+
+        if let Some(remainder) = remainder {
+            return Some(sub(mul((**poly).clone(), antiderivative), remainder));
+        }
+    }
+
+    None
+}
+
+// True for a polynomial in the variable (integer or real constant powers)
+fn is_polynomial(node: &Node, name: char) -> bool {
+    match node {
+        Node::IntNumber(_) | Node::FloatNumber(_) => true,
+        Node::Variable(other) => *other == name,
+        Node::Neg(inner) => is_polynomial(inner, name),
+        Node::Add(left, right) | Node::Sub(left, right) | Node::Mul(left, right) => {
+            is_polynomial(left, name) && is_polynomial(right, name)
+        }
+        Node::Pow(base, exponent) => is_polynomial(base, name) && !has_var(exponent, name),
+        _ => false,
+    }
+}
+
 fn builtin_integral(function: Function, argument: Node) -> Option<Node> {
     let antiderivative = match function {
         Function::Sin => neg(builtin(Function::Cos, argument)),
@@ -1302,9 +1657,9 @@ fn builtin_integral(function: Function, argument: Node) -> Option<Node> {
         Function::Sinh => builtin(Function::Cosh, argument),
         Function::Cosh => builtin(Function::Sinh, argument),
         Function::Tan => neg(ln(abs(builtin(Function::Cos, argument)))),
-        Function::Sqrt => mul(number(2.0 / 3.0), pow(argument, number(1.5))),
+        Function::Sqrt => mul(fraction(2, 3), pow(argument, number(1.5))),
         Function::Cbrt => mul(
-            number(0.75),
+            fraction(3, 4),
             mul(argument.clone(), builtin(Function::Cbrt, argument)),
         ),
         Function::Ln => sub(mul(argument.clone(), ln(argument.clone())), argument),
@@ -1655,8 +2010,8 @@ pub fn user_inverse(body: &Node, param: char, argument: Node) -> Option<Node> {
         return Some(if slope == 1.0 {
             shifted
         } else {
-                div(shifted, number(slope))
-            });
+            div(shifted, number(slope))
+        });
     }
 
     let (coefficient, base) = split_coefficient(&body);
@@ -1665,14 +2020,14 @@ pub fn user_inverse(body: &Node, param: char, argument: Node) -> Option<Node> {
         _ => return None,
     };
 
-    if coefficient == 0.0 || exponent == 0.0 {
+    if coefficient.is_zero() || exponent == 0.0 {
         return None;
     }
 
-    let scaled = if coefficient == 1.0 {
+    let scaled = if coefficient.is_one() {
         argument
     } else {
-        div(argument, number(coefficient))
+        div(argument, coefficient.to_node())
     };
 
     Some(pow(scaled, number(1.0 / exponent)))

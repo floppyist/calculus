@@ -148,6 +148,10 @@ fn parse_factor(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
             Ok(Node::Call(name.clone(), arguments))
         }
 
+        Some(Token::Sum) => parse_reduction(iter, true),
+
+        Some(Token::Product) => parse_reduction(iter, false),
+
         Some(Token::Lparen) => {
             let inner_expression = parse_expression(iter)?;
 
@@ -157,6 +161,46 @@ fn parse_factor(iter: &mut Peekable<Iter<Token>>) -> Result<Node, ParseError> {
         }
 
         _ => Err(ParseError::UnexpectedToken),
+    }
+}
+
+// sum(index, lower, upper, body) / prod(...); the first argument is the index
+fn parse_reduction(iter: &mut Peekable<Iter<Token>>, is_sum: bool) -> Result<Node, ParseError> {
+    expect_lparen(iter)?;
+
+    let index = match iter.next() {
+        Some(Token::Variable(name)) => *name,
+        _ => return Err(ParseError::UnexpectedToken),
+    };
+
+    expect_comma(iter)?;
+
+    let lower = parse_expression(iter)?;
+
+    expect_comma(iter)?;
+
+    let upper = parse_expression(iter)?;
+
+    expect_comma(iter)?;
+
+    let body = parse_expression(iter)?;
+
+    expect_rparen(iter)?;
+
+    if is_sum {
+        Ok(Node::Sum(
+            index,
+            Box::new(lower),
+            Box::new(upper),
+            Box::new(body),
+        ))
+    } else {
+        Ok(Node::Product(
+            index,
+            Box::new(lower),
+            Box::new(upper),
+            Box::new(body),
+        ))
     }
 }
 
@@ -193,5 +237,12 @@ fn expect_rparen(iter: &mut Peekable<Iter<Token>>) -> Result<(), ParseError> {
     match iter.next() {
         Some(Token::Rparen) => Ok(()),
         _ => Err(ParseError::ExpectedClosingParen),
+    }
+}
+
+fn expect_comma(iter: &mut Peekable<Iter<Token>>) -> Result<(), ParseError> {
+    match iter.next() {
+        Some(Token::Comma) => Ok(()),
+        _ => Err(ParseError::UnexpectedToken),
     }
 }

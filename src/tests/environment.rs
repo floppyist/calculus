@@ -367,3 +367,42 @@ fn test_function_source_is_canonical() {
         vec!["g(x) = 3x + 4n^x", "h(x) = 2x + g(x) + 2"]
     );
 }
+
+#[test]
+fn test_reduction_values() {
+    let mut environment = Environment::new();
+    let value = |environment: &mut Environment, expression: &str| match environment
+        .execute(expression)
+        .unwrap()
+    {
+        Outcome::Value(value) => value,
+        other => panic!("expected a value, got {:?}", other),
+    };
+
+    assert_eq!(value(&mut environment, "sum(k,1,5,k)"), 15.0);
+    assert_eq!(value(&mut environment, "prod(k,1,5,k)"), 120.0);
+    assert_eq!(value(&mut environment, "sum(k,1,10,k^2)"), 385.0);
+    assert_eq!(value(&mut environment, "2sum(k,1,3,k)"), 12.0);
+    assert_eq!(value(&mut environment, "∑(k,1,4,k)"), 10.0);
+    assert_eq!(value(&mut environment, "∏(k,1,4,k)"), 24.0);
+    assert_eq!(value(&mut environment, "sum(k,5,1,k)"), 0.0);
+}
+
+#[test]
+fn test_reduction_bounds_react_to_variables() {
+    let mut environment = Environment::new();
+
+    environment.execute("n=4").unwrap();
+
+    match environment.execute("sum(k,1,n,k)").unwrap() {
+        Outcome::Value(value) => assert_eq!(value, 10.0),
+        other => panic!("expected a value, got {:?}", other),
+    }
+
+    environment.execute("n=7").unwrap();
+
+    match environment.execute("sum(k,1,n,k)").unwrap() {
+        Outcome::Value(value) => assert_eq!(value, 28.0),
+        other => panic!("expected a value, got {:?}", other),
+    }
+}
