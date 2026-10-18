@@ -113,6 +113,14 @@ pub struct SolveOutcome {
     pub solutions: Vec<String>,
 }
 
+// A solved equation kept for the Equations pane
+#[derive(Debug)]
+pub struct EquationEntry {
+    pub equation: String,
+    pub variable: char,
+    pub solutions: Vec<String>,
+}
+
 // What the print command resolved its argument to
 #[derive(Debug)]
 pub enum PrintTarget {
@@ -139,6 +147,7 @@ pub struct Environment {
     variables: HashMap<char, Definition>,
     functions: HashMap<String, Definition>,
     values: HashMap<char, f64>,
+    equations: Vec<EquationEntry>,
 }
 
 impl Environment {
@@ -147,6 +156,7 @@ impl Environment {
             variables: HashMap::new(),
             functions: HashMap::new(),
             values: HashMap::new(),
+            equations: Vec::new(),
         }
     }
 
@@ -156,6 +166,24 @@ impl Environment {
 
     pub fn values(&self) -> &HashMap<char, f64> {
         &self.values
+    }
+
+    pub fn equations(&self) -> &[EquationEntry] {
+        &self.equations
+    }
+
+    // Removes a stored equation; true if it existed
+    pub fn remove_equation(&mut self, index: usize) -> bool {
+        if index < self.equations.len() {
+            self.equations.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn clear_equations(&mut self) {
+        self.equations.clear();
     }
 
     // Integration constant letters that appear as free variables in functions
@@ -340,13 +368,13 @@ impl Environment {
     }
 
     // Solves an equation for a variable; returns the solution expressions
-    pub fn solve(&self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
+    pub fn solve(&mut self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
         let (left, right) = split_equation(equation).ok_or(EvalError::InvalidAssignment)?;
         let functions = self.function_map();
         let left = algebra::expand_calls(&self.parse_and_validate(left, &[])?, &functions, 0);
         let right = algebra::expand_calls(&self.parse_and_validate(right, &[])?, &functions, 0);
 
-        let solutions = match algebra::solve_equation(&left, &right, variable) {
+        let solutions: Vec<String> = match algebra::solve_equation(&left, &right, variable) {
             Some(solutions) => solutions.iter().map(algebra::to_source).collect(),
             None => {
                 let difference =
@@ -360,6 +388,23 @@ impl Environment {
                 roots.iter().map(|root| format_root(*root)).collect()
             }
         };
+
+        if !solutions.is_empty() {
+            let equation = equation.trim().to_string();
+
+            match self
+                .equations
+                .iter_mut()
+                .find(|entry| entry.equation == equation && entry.variable == variable)
+            {
+                Some(entry) => entry.solutions = solutions.clone(),
+                None => self.equations.push(EquationEntry {
+                    equation,
+                    variable,
+                    solutions: solutions.clone(),
+                }),
+            }
+        }
 
         Ok(SolveOutcome {
             variable,
@@ -725,8 +770,7 @@ impl Environment {
         match target {
             Target::Variable(name) => {
                 let body = self.parse_and_validate(expression, &[])?;
-
-                self.variables.insert(
+                let previous = self.variables.insert(
                     name,
                     Definition {
                         source: expression.to_string(),
@@ -735,7 +779,18 @@ impl Environment {
                     },
                 );
 
-                self.recompute()?;
+                if let Err(error) = self.recompute() {
+                    match previous {
+                        Some(old) => {
+                            self.variables.insert(name, old);
+                        }
+                        None => {
+                            self.variables.remove(&name);
+                        }
+                    }
+
+                    return Err(error);
+                }
 
                 Ok(Outcome::VariableDefined(format!(
                     "{} = {}",
@@ -757,8 +812,7 @@ impl Environment {
                 let body = algebra::simplify(&body);
                 let source = algebra::to_source(&body);
                 let parameters: String = params.iter().copied().collect();
-
-                self.functions.insert(
+                let previous = self.functions.insert(
                     name.clone(),
                     Definition {
                         source: source.clone(),
@@ -767,7 +821,18 @@ impl Environment {
                     },
                 );
 
-                self.recompute()?;
+                if let Err(error) = self.recompute() {
+                    match previous {
+                        Some(old) => {
+                            self.functions.insert(name.clone(), old);
+                        }
+                        None => {
+                            self.functions.remove(&name);
+                        }
+                    }
+
+                    return Err(error);
+                }
 
                 Ok(Outcome::FunctionDefined(format!(
                     "{}({}) = {}",

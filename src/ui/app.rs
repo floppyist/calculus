@@ -112,6 +112,7 @@ enum Focus {
     Input,
     Variables,
     Functions,
+    Equations,
     Output,
 }
 
@@ -175,6 +176,7 @@ pub struct App {
     focus: Focus,
     var_selection: usize,
     side_selection: usize,
+    eq_selection: usize,
     scroll: usize,
     help_visible: bool,
     help_scroll: usize,
@@ -191,6 +193,10 @@ pub struct App {
     show_plot: bool,
     show_vars: bool,
     show_funcs: bool,
+    show_eq: bool,
+    // Output stashed by `clear`, brought back by the `history` command
+    #[allow(dead_code)]
+    cleared: Vec<OutputLine>,
     should_quit: bool,
 }
 
@@ -206,6 +212,7 @@ impl App {
             pending_d: false,
             var_selection: 0,
             side_selection: 0,
+            eq_selection: 0,
             scroll: 0,
             help_visible: false,
             help_scroll: 0,
@@ -220,6 +227,8 @@ impl App {
             show_plot: true,
             show_vars: true,
             show_funcs: true,
+            show_eq: true,
+            cleared: Vec::new(),
             should_quit: false,
         };
 
@@ -469,11 +478,13 @@ impl App {
             } else {
                 ("NORMAL", Color::BrightBlue)
             }),
-            Focus::Variables | Focus::Functions => Some(if self.side_visual.is_some() {
-                ("VISUAL", Color::BrightYellow)
-            } else {
-                ("NORMAL", Color::BrightBlue)
-            }),
+            Focus::Variables | Focus::Functions | Focus::Equations => {
+                Some(if self.side_visual.is_some() {
+                    ("VISUAL", Color::BrightYellow)
+                } else {
+                    ("NORMAL", Color::BrightBlue)
+                })
+            }
         }
     }
 
@@ -934,50 +945,57 @@ impl App {
             return;
         }
 
-        let vars = self.variables_visible();
-        let funcs = self.functions_visible();
+        let mut sections: Vec<Focus> = Vec::new();
 
-        if !vars && !funcs {
+        if self.variables_visible() {
+            sections.push(Focus::Variables);
+        }
+
+        if self.functions_visible() {
+            sections.push(Focus::Functions);
+        }
+
+        if self.equations_visible() {
+            sections.push(Focus::Equations);
+        }
+
+        if sections.is_empty() {
             return;
         }
 
-        if rect.height < 8 || !vars || !funcs {
-            if vars && !funcs {
-                self.draw_variables(canvas, rect);
-            } else if funcs && !vars {
-                self.draw_functions(canvas, rect);
-            } else if self.focus == Focus::Variables {
-                self.draw_variables(canvas, rect);
-            } else {
-                self.draw_functions(canvas, rect);
+        // With enough room every section gets an equal slice, otherwise only
+        // the focused one (or the first) is shown in full
+        if rect.height >= sections.len() * 3 {
+            let base = rect.height / sections.len();
+            let mut y = rect.y;
+
+            for (index, section) in sections.iter().enumerate() {
+                let height = if index + 1 == sections.len() {
+                    rect.bottom().saturating_sub(y)
+                } else {
+                    base
+                };
+
+                self.draw_side_section(canvas, *section, Rect { y, height, ..rect });
+                y += height;
             }
+        } else {
+            let section = if sections.contains(&self.focus) {
+                self.focus
+            } else {
+                sections[0]
+            };
 
-            return;
+            self.draw_side_section(canvas, section, rect);
         }
+    }
 
-        let variables_height = (rect.height / 3).max(3);
-        let functions_height = rect.height.saturating_sub(variables_height);
-
-        self.draw_variables(
-            canvas,
-            Rect {
-                x: rect.x,
-                y: rect.y,
-                width: rect.width,
-                height: variables_height,
-            },
-        );
-
-        if functions_height >= 3 {
-            self.draw_functions(
-                canvas,
-                Rect {
-                    x: rect.x,
-                    y: rect.y + variables_height,
-                    width: rect.width,
-                    height: functions_height,
-                },
-            );
+    fn draw_side_section(&self, canvas: &mut Canvas, section: Focus, rect: Rect) {
+        match section {
+            Focus::Variables => self.draw_variables(canvas, rect),
+            Focus::Functions => self.draw_functions(canvas, rect),
+            Focus::Equations => self.draw_equations(canvas, rect),
+            Focus::Input | Focus::Output => {}
         }
     }
 
@@ -1145,6 +1163,102 @@ impl App {
         }
     }
 
+    fn draw_equations(&self, canvas: &mut Canvas, rect: Rect) {
+        self.draw_pane_box(canvas, rect, Focus::Equations, "Equations");
+
+        let inner = inner_rect(rect);
+
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let entries = self.environment.equations();
+
+        if entries.is_empty() {
+            canvas.print(inner.x as isize, inner.y as isize, "(none)", hint_style());
+            return;
+        }
+
+        let selection = self.eq_selection.min(entries.len() - 1);
+        let view = inner.height;
+        let offset = if selection >= view {
+            selection + 1 - view
+        } else {
+            0
+        };
+        let focused = self.focus == Focus::Equations;
+        let range = if focused {
+            self.side_visual_range()
+        } else {
+            None
+        };
+        let mut row = 0;
+
+        for (index, _) in entries.iter().enumerate().skip(offset) {
+            if row >= view {
+                break;
+            }
+
+            let entry = &entries[index];
+            let in_selection = range.is_some_and(|(begin, end)| index >= begin && index <= end);
+            let style = if in_selection {
+                selected_style()
+            } else {
+                value_style()
+            };
+            let cursor = (focused && range.is_none() && index == selection).then_some(0);
+            let text = format!("  {}", entry.equation);
+
+            print_side_row(
+                canvas,
+                inner.x as isize,
+                inner.y as isize + row as isize,
+                inner.width,
+                &text,
+                style,
+                cursor,
+            );
+            row += 1;
+
+            let preview = self.equation_solutions_text(index).unwrap_or_default();
+
+            if !preview.is_empty() && row < view {
+                canvas.print_clipped(
+                    inner.x as isize + 2,
+                    inner.y as isize + row as isize,
+                    inner.width.saturating_sub(2),
+                    &preview,
+                    hint_style(),
+                );
+                row += 1;
+            }
+        }
+    }
+
+    // Solutions preview shown below an equation row, in darker grey
+    fn equation_solutions_text(&self, index: usize) -> Option<String> {
+        let entry = self.environment.equations().get(index)?;
+
+        if entry.solutions.is_empty() {
+            return None;
+        }
+
+        let solutions: Vec<String> = entry
+            .solutions
+            .iter()
+            .map(|solution| format!("{} = {}", entry.variable, solution))
+            .collect();
+
+        Some(format!("({})", solutions.join(", ")))
+    }
+
+    // The equation text alone, matching the "body only" yank behaviour
+    fn equation_row_text(&self, index: usize) -> Option<String> {
+        let entry = self.environment.equations().get(index)?;
+
+        Some(entry.equation.clone())
+    }
+
     // Inclusive row range currently selected in the focused sidebar pane
     fn side_visual_range(&self) -> Option<(usize, usize)> {
         let (anchor, cursor) = self.side_visual?;
@@ -1192,7 +1306,7 @@ impl App {
                     self.handle_output_key(key);
                 }
             }
-            Focus::Variables | Focus::Functions => self.handle_side_key(key),
+            Focus::Variables | Focus::Functions | Focus::Equations => self.handle_side_key(key),
         }
     }
 
@@ -1931,6 +2045,7 @@ impl App {
     fn current_selection(&self) -> &usize {
         match self.focus {
             Focus::Variables => &self.var_selection,
+            Focus::Equations => &self.eq_selection,
             _ => &self.side_selection,
         }
     }
@@ -1938,6 +2053,7 @@ impl App {
     fn current_selection_mut(&mut self) -> &mut usize {
         match self.focus {
             Focus::Variables => &mut self.var_selection,
+            Focus::Equations => &mut self.eq_selection,
             _ => &mut self.side_selection,
         }
     }
@@ -1946,11 +2062,11 @@ impl App {
         match self.focus {
             Focus::Variables => self.sidebar_variable_rows().len(),
             Focus::Functions => self.function_names().len(),
+            Focus::Equations => self.environment.equations().len(),
             _ => 0,
         }
     }
 
-    // The plain text shown for one sidebar row, without the plot marker
     // The plain text shown for one sidebar row, without markers or tags
     fn side_value_text(&self, index: usize) -> Option<String> {
         match self.focus {
@@ -1967,6 +2083,7 @@ impl App {
 
                 Some(definition.source.clone())
             }
+            Focus::Equations => self.equation_row_text(index),
             Focus::Input | Focus::Output => None,
         }
     }
@@ -2005,6 +2122,15 @@ impl App {
                 ))
             }
             Focus::Input | Focus::Output => None,
+            Focus::Equations => {
+                let base = self.equation_row_text(index)?;
+                let preview = match self.equation_solutions_text(index) {
+                    Some(text) => format!(" {}", text),
+                    None => String::new(),
+                };
+
+                Some(format!("{}{}", base, preview))
+            }
         }
     }
 
@@ -2050,6 +2176,10 @@ impl App {
             panes.push(Focus::Functions);
         }
 
+        if self.equations_visible() {
+            panes.push(Focus::Equations);
+        }
+
         panes.push(Focus::Output);
 
         panes
@@ -2081,7 +2211,7 @@ impl App {
                     self.out_cursor = (last, 0);
                 }
             }
-            Focus::Variables | Focus::Functions => {}
+            Focus::Variables | Focus::Functions | Focus::Equations => {}
         }
     }
 
@@ -2090,13 +2220,18 @@ impl App {
     }
 
     fn functions_visible(&self) -> bool {
-        self.show_funcs && !self.environment.functions().is_empty()
+        self.show_funcs
+    }
+
+    fn equations_visible(&self) -> bool {
+        self.show_eq
     }
 
     fn ensure_focus_valid(&mut self) {
         let valid = match self.focus {
             Focus::Variables => self.variables_visible(),
             Focus::Functions => self.functions_visible(),
+            Focus::Equations => self.equations_visible(),
             Focus::Input | Focus::Output => true,
         };
 
@@ -2108,13 +2243,14 @@ impl App {
     }
 
     fn side_visible(&self) -> bool {
-        self.variables_visible() || self.functions_visible()
+        self.variables_visible() || self.functions_visible() || self.equations_visible()
     }
 
     fn toggle_selected(&mut self) {
         match self.focus {
             Focus::Variables => self.toggle_variable(),
             Focus::Functions => self.toggle_function(),
+            Focus::Equations => {}
             Focus::Input | Focus::Output => {}
         }
 
@@ -2200,6 +2336,7 @@ impl App {
         match self.focus {
             Focus::Variables => self.delete_variable(),
             Focus::Functions => self.delete_function(),
+            Focus::Equations => self.delete_equation(),
             Focus::Input | Focus::Output => {}
         }
 
@@ -2264,6 +2401,26 @@ impl App {
         }
     }
 
+    fn delete_equation(&mut self) {
+        let entries = self.environment.equations().len();
+
+        if entries == 0 {
+            return;
+        }
+
+        let index = self.eq_selection.min(entries - 1);
+
+        self.environment.remove_equation(index);
+
+        let remaining = self.environment.equations().len();
+
+        if remaining == 0 {
+            self.eq_selection = 0;
+        } else {
+            self.eq_selection = self.eq_selection.min(remaining - 1);
+        }
+    }
+
     fn submit(&mut self) {
         let line = self.editor.text();
         let trimmed = line.trim().to_string();
@@ -2288,10 +2445,11 @@ impl App {
 
         let had_vars = !self.environment.values().is_empty();
         let had_funcs = !self.environment.functions().is_empty();
+        let had_eqs = !self.environment.equations().is_empty();
 
         if let Some(command) = command::parse_command(&trimmed) {
             self.run_command(command);
-            self.auto_reveal(had_vars, had_funcs);
+            self.auto_reveal(had_vars, had_funcs, had_eqs);
             return;
         }
 
@@ -2305,18 +2463,22 @@ impl App {
             Err(error) => self.push_info(error_style(), format!("{}", error)),
         }
 
-        self.auto_reveal(had_vars, had_funcs);
+        self.auto_reveal(had_vars, had_funcs, had_eqs);
         self.persist();
     }
 
     // Shows a pane again once it goes from empty to populated
-    fn auto_reveal(&mut self, had_vars: bool, had_funcs: bool) {
+    fn auto_reveal(&mut self, had_vars: bool, had_funcs: bool, had_eqs: bool) {
         if !had_vars && !self.environment.values().is_empty() {
             self.show_vars = true;
         }
 
         if !had_funcs && !self.environment.functions().is_empty() {
             self.show_funcs = true;
+        }
+
+        if !had_eqs && !self.environment.equations().is_empty() {
+            self.show_eq = true;
         }
 
         self.ensure_focus_valid();
@@ -2388,6 +2550,11 @@ impl App {
             }
             Command::Solve { equation, variable } => {
                 self.command_solve(&equation, &variable);
+                self.persist();
+            }
+            Command::ClearEquations => {
+                self.environment.clear_equations();
+                self.push_info(hint_style(), "equations cleared".to_string());
                 self.persist();
             }
             Command::Error(message) => self.push_info(error_style(), message),
@@ -2579,6 +2746,13 @@ impl App {
                     self.push_info(hint_style(), "no functions yet".to_string());
                 }
             }
+            PaneArg::Equations => {
+                self.show_eq = show;
+
+                if show && self.environment.equations().is_empty() {
+                    self.push_info(hint_style(), "no equations yet".to_string());
+                }
+            }
             PaneArg::Info => {
                 self.hide_info = !show;
 
@@ -2589,6 +2763,7 @@ impl App {
                 self.show_plot = show;
                 self.show_vars = show;
                 self.show_funcs = show;
+                self.show_eq = show;
             }
         }
 
@@ -2829,6 +3004,17 @@ impl App {
     pub(crate) fn focus_output(&mut self) {
         for _ in 0..8 {
             if self.focus == Focus::Output {
+                return;
+            }
+
+            self.cycle_focus();
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn focus_equations(&mut self) {
+        for _ in 0..8 {
+            if self.focus == Focus::Equations {
                 return;
             }
 

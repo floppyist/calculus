@@ -540,3 +540,62 @@ fn test_hide_info_output_reads_as_notebook() {
         );
     }
 }
+
+#[test]
+fn test_equations_pane_shows_solutions_below() {
+    let mut app = App::new();
+
+    type_line(&mut app, "solve x^2=4, x");
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        frame.contains("  x^2=4"),
+        "equation should be indented: {frame}"
+    );
+    assert!(
+        frame.contains("(x = 2, x = -2)"),
+        "solutions preview missing: {frame}"
+    );
+}
+
+#[test]
+fn test_equations_pane_yanks_equation_without_selection() {
+    let mut app = App::new();
+
+    type_line(&mut app, "solve x^2=4, x");
+    app.focus_equations();
+    app.handle_key(Key::Char('y'));
+
+    let messages = app.output_texts();
+
+    // Without a mark only the equation body is copied
+    assert!(
+        messages
+            .iter()
+            .any(|line| line.starts_with("Copied 5 chars to")),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
+fn test_equations_pane_visual_yank_includes_solutions() {
+    let mut app = App::new();
+
+    type_line(&mut app, "solve x^2=4, x");
+    app.focus_equations();
+    app.handle_key(Key::Char('v'));
+    app.handle_key(Key::Char('y'));
+
+    let messages = app.output_texts();
+
+    // The marked row reads "x^2=4 (x = 2, x = -2)" (21 chars)
+    assert!(
+        messages
+            .iter()
+            .any(|line| line.starts_with("Copied 21 chars to")),
+        "{:?}",
+        messages
+    );
+}

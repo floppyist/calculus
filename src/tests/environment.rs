@@ -104,6 +104,33 @@ fn test_cyclic_dependency_is_detected() {
 }
 
 #[test]
+fn test_failed_cyclic_definition_is_rolled_back() {
+    let mut environment = Environment::new();
+
+    environment.execute("x=3x^2").unwrap_err();
+
+    // The rejected self-reference must not linger and poison later defines
+    assert!(!environment.values().contains_key(&'x'));
+
+    let outcome = environment.execute("y=1").unwrap();
+
+    assert!(matches!(outcome, Outcome::VariableDefined(_)));
+    assert_eq!(environment.values().get(&'y'), Some(&1.0));
+}
+
+#[test]
+fn test_failed_cyclic_function_definition_is_rolled_back() {
+    let mut environment = Environment::new();
+
+    environment.execute("x=3x^2").unwrap_err();
+
+    let outcome = environment.execute("f(x)=3x").unwrap();
+
+    assert!(matches!(outcome, Outcome::FunctionDefined(_)));
+    assert!(environment.functions().contains_key("f"));
+}
+
+#[test]
 fn test_function_definition_and_call() {
     let mut environment = Environment::new();
 

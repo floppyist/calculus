@@ -301,7 +301,7 @@ fn test_integrate_recursive_function_is_not_integrable() {
 }
 
 fn solutions(equation: &str, variable: char) -> Vec<String> {
-    let environment = Environment::new();
+    let mut environment = Environment::new();
 
     environment
         .solve(equation, variable)
@@ -353,7 +353,7 @@ fn test_solve_expands_function_calls() {
 
 #[test]
 fn test_solve_rejects_unsupported() {
-    let environment = Environment::new();
+    let mut environment = Environment::new();
 
     assert!(matches!(
         environment.solve("e^x=0", 'x').unwrap_err(),
@@ -367,7 +367,7 @@ fn test_solve_rejects_unsupported() {
 
 #[test]
 fn test_solve_numeric_fallback() {
-    let environment = Environment::new();
+    let mut environment = Environment::new();
 
     let cubic = environment.solve("x^3=8", 'x').expect("solve failed");
 

@@ -83,11 +83,13 @@ fn run_plain() -> io::Result<()> {
                 Command::ClearAll => {
                     environment.clear_variables();
                     environment.clear_functions();
+                    environment.clear_equations();
                     writeln!(stdout, "cleared all")?;
                 }
                 Command::ClearOutput
                 | Command::ClearInfo
                 | Command::ClearPlots
+                | Command::ClearEquations
                 | Command::ClearHistory
                 | Command::Show(_)
                 | Command::Hide(_)

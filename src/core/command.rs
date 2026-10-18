@@ -12,6 +12,7 @@ pub enum Command {
     ClearPlots,
     ClearVariables,
     ClearFunctions,
+    ClearEquations,
     ClearAll,
     ClearHistory,
     Simplify(String),
@@ -35,6 +36,7 @@ pub enum PaneArg {
     Plot,
     Variables,
     Functions,
+    Equations,
     Info,
     All,
 }
@@ -85,6 +87,10 @@ pub fn parse_command(input: &str) -> Option<Command> {
 
     if trimmed == "clear funcs" {
         return Some(Command::ClearFunctions);
+    }
+
+    if trimmed == "clear eq" || trimmed == "clear equations" {
+        return Some(Command::ClearEquations);
     }
 
     if trimmed == "clear plots" {
@@ -202,6 +208,7 @@ fn pane_argument(word: &str) -> Option<PaneArg> {
         "plot" | "plots" => Some(PaneArg::Plot),
         "vars" | "variables" => Some(PaneArg::Variables),
         "funcs" | "functions" => Some(PaneArg::Functions),
+        "eq" | "equations" => Some(PaneArg::Equations),
         "info" => Some(PaneArg::Info),
         "all" => Some(PaneArg::All),
         _ => None,
