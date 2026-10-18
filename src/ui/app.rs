@@ -600,10 +600,7 @@ impl App {
             }
 
             // Without the echo line the result carries its own input
-            let text = match (&line.origin, self.hide_info) {
-                (Some(origin), true) => format!("{} {}", origin, line.text),
-                _ => line.text.clone(),
-            };
+            let text = self.display_text(line_index);
 
             for (stamp, chunk, start) in wrap_with_stamp(line.stamp.as_deref(), &text, inner.width)
             {
@@ -678,7 +675,7 @@ impl App {
             }
 
             let span = selection.and_then(|(anchor, cursor)| {
-                let length = self.output[*line_index].text.chars().count();
+                let length = self.out_length(*line_index);
 
                 selection_span(*line_index, length, anchor, cursor)
             });
@@ -1355,8 +1352,8 @@ impl App {
             Key::Char('0') | Key::Home => self.out_column(0),
             Key::Char('^') => self.out_first_nonblank(),
             Key::Char('$') | Key::End => self.out_column(usize::MAX),
-            Key::Char('g') => self.out_jump(0, false),
-            Key::Char('G') => self.out_jump(usize::MAX, true),
+            Key::Char('g') => self.out_jump(true, false),
+            Key::Char('G') => self.out_jump(false, true),
             Key::Char('v') => self.start_visual(),
             Key::Char('y') => self.yank_line(),
             Key::Char('Y') => self.yank_output(),
@@ -1398,8 +1395,8 @@ impl App {
             Key::Char('0') | Key::Home => self.out_column(0),
             Key::Char('^') => self.out_first_nonblank(),
             Key::Char('$') | Key::End => self.out_column(usize::MAX),
-            Key::Char('g') => self.out_jump(0, false),
-            Key::Char('G') => self.out_jump(usize::MAX, true),
+            Key::Char('g') => self.out_jump(true, false),
+            Key::Char('G') => self.out_jump(false, true),
             _ => {}
         }
 
@@ -1415,7 +1412,7 @@ impl App {
     }
 
     fn start_visual(&mut self) {
-        if self.output.is_empty() {
+        if self.visible_lines().is_empty() {
             return;
         }
 
@@ -1506,85 +1503,174 @@ impl App {
         self.copy_to_clipboard(text);
     }
 
-    // Keeps the output cursor on an existing character
-    fn clamp_out_cursor(&mut self) {
-        if self.output.is_empty() {
-            self.out_cursor = (0, 0);
-            return;
+    // Raw indices of the output lines that are currently drawn
+    fn visible_lines(&self) -> Vec<usize> {
+        if !self.hide_info {
+            return (0..self.output.len()).collect();
         }
 
-        let line = self.out_cursor.0.min(self.output.len() - 1);
+        self.output
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| !matches!(line.kind, Kind::Info | Kind::Echo))
+            .map(|(index, _)| index)
+            .collect()
+    }
+
+    // The text the pane draws for a line: the input is folded in with hide info
+    fn display_text(&self, index: usize) -> String {
+        let Some(line) = self.output.get(index) else {
+            return String::new();
+        };
+
+        match (&line.origin, self.hide_info) {
+            (Some(origin), true) => format!("{} {}", origin, line.text),
+            _ => line.text.clone(),
+        }
+    }
+
+    // Number of characters in one drawn line, zero for a missing line
+    fn out_length(&self, index: usize) -> usize {
+        self.display_text(index).chars().count()
+    }
+
+    // Snaps the output cursor, and any selection, onto lines that are still drawn
+    fn snap_output_to_visible(&mut self) {
+        self.clamp_out_cursor();
+
+        let (line, col) = self.out_cursor;
+        let visible = self.visible_lines();
+
+        let anchor = self.visual.as_ref().map(|visual| {
+            (
+                visible
+                    .iter()
+                    .copied()
+                    .min_by_key(|raw| raw.abs_diff(visual.anchor_line)),
+                visual.anchor_col,
+            )
+        });
+
+        match anchor {
+            Some((Some(anchor), anchor_col)) => {
+                let anchor_col = anchor_col.min(self.out_length(anchor).saturating_sub(1));
+
+                if let Some(visual) = self.visual.as_mut() {
+                    visual.line = line;
+                    visual.col = col;
+                    visual.anchor_line = anchor;
+                    visual.anchor_col = anchor_col;
+                }
+            }
+            Some((None, _)) => self.visual = None,
+            None => {}
+        }
+    }
+
+    fn clamp_out_cursor(&mut self) {
+        let visible = self.visible_lines();
+
+        let Some(line) = visible
+            .iter()
+            .copied()
+            .min_by_key(|raw| raw.abs_diff(self.out_cursor.0))
+        else {
+            self.out_cursor = (0, 0);
+            return;
+        };
+
         let col = self
             .out_cursor
             .1
-            .min(line_length(&self.output, line).saturating_sub(1));
+            .min(self.out_length(line).saturating_sub(1));
 
         self.out_cursor = (line, col);
     }
 
     fn out_move_left(&mut self) {
-        let (mut line, mut col) = self.out_cursor;
+        let visible = self.visible_lines();
 
-        if col > 0 {
-            col -= 1;
-        } else if line > 0 {
-            line -= 1;
-            col = line_length(&self.output, line).saturating_sub(1);
-        }
-
-        self.out_cursor = (line, col);
-    }
-
-    fn out_move_right(&mut self) {
-        let (mut line, mut col) = self.out_cursor;
-        let length = line_length(&self.output, line);
-
-        if col + 1 < length {
-            col += 1;
-        } else if line + 1 < self.output.len() {
-            line += 1;
-            col = 0;
-        } else {
-            col = length.saturating_sub(1);
-        }
-
-        self.out_cursor = (line, col);
-    }
-
-    fn out_move_line(&mut self, delta: isize) {
-        if self.output.is_empty() {
+        if self.out_cursor.1 > 0 {
+            self.out_cursor.1 -= 1;
             return;
         }
 
-        let (line, col) = self.out_cursor;
-        let last = self.output.len() - 1;
-        let line = if delta < 0 {
-            line.saturating_sub(delta.unsigned_abs())
-        } else {
-            (line + delta as usize).min(last)
+        let Some(position) = visible.iter().position(|&raw| raw == self.out_cursor.0) else {
+            self.clamp_out_cursor();
+            return;
         };
-        let col = col.min(line_length(&self.output, line).saturating_sub(1));
+
+        if position == 0 {
+            return;
+        }
+
+        let line = visible[position - 1];
+
+        self.out_cursor = (line, self.out_length(line).saturating_sub(1));
+    }
+
+    fn out_move_right(&mut self) {
+        let visible = self.visible_lines();
+        let line = self.out_cursor.0;
+        let length = self.out_length(line);
+
+        if self.out_cursor.1 + 1 < length {
+            self.out_cursor.1 += 1;
+            return;
+        }
+
+        let Some(position) = visible.iter().position(|&raw| raw == line) else {
+            self.clamp_out_cursor();
+            return;
+        };
+
+        if position + 1 >= visible.len() {
+            self.out_cursor.1 = length.saturating_sub(1);
+            return;
+        }
+
+        let next = visible[position + 1];
+
+        self.out_cursor = (next, 0);
+    }
+
+    fn out_move_line(&mut self, delta: isize) {
+        let visible = self.visible_lines();
+
+        let Some(position) = visible.iter().position(|&raw| raw == self.out_cursor.0) else {
+            self.clamp_out_cursor();
+            return;
+        };
+
+        let target = if delta < 0 {
+            position.saturating_sub(delta.unsigned_abs())
+        } else {
+            (position + delta as usize).min(visible.len() - 1)
+        };
+
+        let line = visible[target];
+        let col = self
+            .out_cursor
+            .1
+            .min(self.out_length(line).saturating_sub(1));
 
         self.out_cursor = (line, col);
     }
 
     fn out_word(&mut self, forward: bool) {
-        let cells: Vec<(usize, usize, char)> = self
-            .output
-            .iter()
-            .enumerate()
-            .flat_map(|(line, entry)| {
-                entry
-                    .text
-                    .chars()
-                    .enumerate()
-                    .map(move |(col, ch)| (line, col, ch))
-            })
-            .collect();
+        let mut cells: Vec<(usize, usize, char)> = Vec::new();
+
+        for line in self.visible_lines() {
+            for (col, ch) in self.display_text(line).chars().enumerate() {
+                cells.push((line, col, ch));
+            }
+        }
+
         let Some(mut position) = cells
             .iter()
             .position(|&(line, col, _)| (line, col) == self.out_cursor)
         else {
+            self.clamp_out_cursor();
             return;
         };
 
@@ -1616,29 +1702,41 @@ impl App {
     }
 
     fn out_column(&mut self, col: usize) {
+        self.clamp_out_cursor();
+
         let line = self.out_cursor.0;
 
-        self.out_cursor.1 = col.min(line_length(&self.output, line).saturating_sub(1));
+        self.out_cursor.1 = col.min(self.out_length(line).saturating_sub(1));
     }
 
     fn out_first_nonblank(&mut self) {
+        self.clamp_out_cursor();
+
         let line = self.out_cursor.0;
+        let text = self.display_text(line);
 
-        if let Some(entry) = self.output.get(line) {
-            let column = entry.text.chars().position(|ch| !ch.is_whitespace());
-
-            self.out_cursor.1 = column.unwrap_or(0);
-        }
+        self.out_cursor.1 = text.chars().position(|ch| !ch.is_whitespace()).unwrap_or(0);
     }
 
-    fn out_jump(&mut self, line: usize, to_end: bool) {
-        let last = self.output.len().saturating_sub(1);
-        let line = line.min(last);
+    // 'g' jumps to the first drawn line, 'G' to the last
+    fn out_jump(&mut self, first: bool, to_end: bool) {
+        let visible = self.visible_lines();
+
+        let candidate = if first {
+            visible.first()
+        } else {
+            visible.last()
+        };
+
+        let Some(&line) = candidate else {
+            self.out_cursor = (0, 0);
+            return;
+        };
 
         self.out_cursor = (
             line,
             if to_end {
-                line_length(&self.output, line).saturating_sub(1)
+                self.out_length(line).saturating_sub(1)
             } else {
                 0
             },
@@ -1650,12 +1748,21 @@ impl App {
             return;
         };
 
-        let lines: Vec<String> = self.output.iter().map(|line| line.text.clone()).collect();
-        let text = selected_text(
-            &lines,
-            (visual.anchor_line, visual.anchor_col),
-            (visual.line, visual.col),
-        );
+        let visible = self.visible_lines();
+        let lines: Vec<String> = visible
+            .iter()
+            .map(|&line| self.display_text(line))
+            .collect();
+
+        // The selection is addressed by drawn position, not by stored index
+        let anchor = visible.iter().position(|&raw| raw == visual.anchor_line);
+        let cursor = visible.iter().position(|&raw| raw == visual.line);
+
+        let (Some(anchor), Some(cursor)) = (anchor, cursor) else {
+            return;
+        };
+
+        let text = selected_text(&lines, (anchor, visual.anchor_col), (cursor, visual.col));
 
         self.copy_to_clipboard(text);
     }
@@ -1664,15 +1771,17 @@ impl App {
     fn yank_line(&mut self) {
         self.clamp_out_cursor();
 
-        let Some(entry) = self.output.get(self.out_cursor.0) else {
-            return;
-        };
+        let text = self.display_text(self.out_cursor.0);
 
-        self.copy_to_clipboard(entry.text.clone());
+        self.copy_to_clipboard(text);
     }
 
     fn yank_output(&mut self) {
-        let text: Vec<String> = self.output.iter().map(|line| line.text.clone()).collect();
+        let text: Vec<String> = self
+            .visible_lines()
+            .into_iter()
+            .map(|line| self.display_text(line))
+            .collect();
         let text = text.join("\n");
 
         self.exit_visual();
@@ -1842,6 +1951,7 @@ impl App {
     }
 
     // The plain text shown for one sidebar row, without the plot marker
+    // The plain text shown for one sidebar row, without markers or tags
     fn side_value_text(&self, index: usize) -> Option<String> {
         match self.focus {
             Focus::Variables => {
@@ -1856,6 +1966,43 @@ impl App {
                 let definition = self.environment.functions().get(name)?;
 
                 Some(definition.source.clone())
+            }
+            Focus::Input | Focus::Output => None,
+        }
+    }
+
+    // The full text a sidebar row shows, tag and value/preview included
+    fn side_row_text(&self, index: usize) -> Option<String> {
+        match self.focus {
+            Focus::Variables => {
+                let rows = self.sidebar_variable_rows();
+                let row = rows.get(index)?;
+                let tag = match row.kind {
+                    VariableKind::Constant => "[const]",
+                    VariableKind::Custom => "[custom]",
+                };
+
+                Some(format!(
+                    "{} {} = {}",
+                    row.name,
+                    tag,
+                    format_number(row.value)
+                ))
+            }
+            Focus::Functions => {
+                let names = self.function_names();
+                let name = names.get(index)?;
+                let definition = self.environment.functions().get(name)?;
+                let params: String = definition.params.iter().copied().collect();
+                let preview = match self.environment.function_result(definition) {
+                    Some(value) => format!(" (= {})", format_number(value)),
+                    None => String::new(),
+                };
+
+                Some(format!(
+                    "{}({}) = {}{}",
+                    name, params, definition.source, preview
+                ))
             }
             Focus::Input | Focus::Output => None,
         }
@@ -1884,7 +2031,7 @@ impl App {
         let mut rows = Vec::new();
 
         for index in begin..=end {
-            if let Some(text) = self.side_value_text(index) {
+            if let Some(text) = self.side_row_text(index) {
                 rows.push(text);
             }
         }
@@ -1930,8 +2077,8 @@ impl App {
                 self.input_visual = None;
             }
             Focus::Output => {
-                if !self.output.is_empty() {
-                    self.out_cursor = (self.output.len() - 1, 0);
+                if let Some(&last) = self.visible_lines().last() {
+                    self.out_cursor = (last, 0);
                 }
             }
             Focus::Variables | Focus::Functions => {}
@@ -2432,7 +2579,12 @@ impl App {
                     self.push_info(hint_style(), "no functions yet".to_string());
                 }
             }
-            PaneArg::Info => self.hide_info = !show,
+            PaneArg::Info => {
+                self.hide_info = !show;
+
+                // Hidden lines may have held the cursor or a selection end
+                self.snap_output_to_visible();
+            }
             PaneArg::All => {
                 self.show_plot = show;
                 self.show_vars = show;
@@ -2683,14 +2835,6 @@ impl App {
             self.cycle_focus();
         }
     }
-}
-
-// Number of characters in one output line, zero for a missing line
-fn line_length(output: &[OutputLine], index: usize) -> usize {
-    output
-        .get(index)
-        .map(|line| line.text.chars().count())
-        .unwrap_or(0)
 }
 
 fn inner_rect(rect: Rect) -> Rect {

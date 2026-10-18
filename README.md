@@ -333,7 +333,7 @@ x = -1
 
 ```
 
-Linear equations with symbolic coefficients and quadratic equations with numeric coefficients are supported. Quadratic roots are reported exactly when possible (as fractions) and otherwise in a symbolic square-root form; unsupported degrees return an error.
+Linear equations with symbolic coefficients and quadratic equations with numeric coefficients are supported. Quadratic roots are reported exactly when possible (as fractions) and otherwise in a symbolic square-root form; unsupported degrees return an error. Function calls on either side are expanded to their bodies before solving, so `solve f(x) = g(x), x` works when `f` and `g` are defined.
 
 ### Sums and Products
 
@@ -375,6 +375,18 @@ In interactive mode, individual panes can be toggled:
 ```
 
 Supported pane names are `plot`, `vars`, `funcs`, `info`, and `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`).
+
+Definitions are content rather than status, so they stay in the output while `info` is hidden. The output then reads like a notebook that records every assignment and function definition next to the values it produced:
+
+```text
+f(x) = x^2
+x = 4
+f(x) = 16
+2x+1 = 9
+
+```
+
+`clear info` follows the same rule: it drops the info and echo lines but keeps results and definitions.
 
 ### Command Reference
 

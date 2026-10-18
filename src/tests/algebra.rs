@@ -325,6 +325,33 @@ fn test_solve_quadratic() {
 }
 
 #[test]
+fn test_solve_expands_function_calls() {
+    let mut environment = Environment::new();
+
+    environment.execute("f(x)=x^2").unwrap();
+    environment.execute("g(x)=0").unwrap();
+
+    assert_eq!(
+        environment
+            .solve("f(x)=g(x)", 'x')
+            .expect("solve failed")
+            .solutions,
+        vec!["0".to_string(), "0".to_string()]
+    );
+
+    environment.execute("h(x)=2x+3").unwrap();
+    environment.execute("k(x)=x").unwrap();
+
+    assert_eq!(
+        environment
+            .solve("h(x)=k(x)", 'x')
+            .expect("solve failed")
+            .solutions,
+        vec!["-3".to_string()]
+    );
+}
+
+#[test]
 fn test_solve_rejects_unsupported() {
     let environment = Environment::new();
 

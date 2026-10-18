@@ -342,8 +342,9 @@ impl Environment {
     // Solves an equation for a variable; returns the solution expressions
     pub fn solve(&self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
         let (left, right) = split_equation(equation).ok_or(EvalError::InvalidAssignment)?;
-        let left = self.parse_and_validate(left, &[])?;
-        let right = self.parse_and_validate(right, &[])?;
+        let functions = self.function_map();
+        let left = algebra::expand_calls(&self.parse_and_validate(left, &[])?, &functions, 0);
+        let right = algebra::expand_calls(&self.parse_and_validate(right, &[])?, &functions, 0);
 
         let solutions = match algebra::solve_equation(&left, &right, variable) {
             Some(solutions) => solutions.iter().map(algebra::to_source).collect(),
@@ -703,6 +704,13 @@ impl Environment {
         // A function signature is only ever a target on the left side; the
         // right side is an expression (a bare f(x) there is a call, not a target)
         let left_target = parse_target(left, true)?;
+
+        // A left-side signature makes the whole right side an expression, so a
+        // lone variable there (f(x)=x) is a body instead of a competing target
+        if matches!(left_target, Some(Target::Function(..))) {
+            return self.define(left_target.expect("checked above"), right.trim());
+        }
+
         let right_target = parse_target(right, false)?;
 
         match (left_target, right_target) {

@@ -7,6 +7,7 @@ use crate::core::rational::Rational;
 // Guards against exploding recursion when expanding recursive user functions
 const MAX_DIFF_DEPTH: usize = 128;
 const MAX_INTEGRAL_DEPTH: usize = 128;
+const MAX_CALL_DEPTH: usize = 128;
 
 // Operator precedence used by the source printer
 const P_ADD: u8 = 1;
@@ -538,6 +539,78 @@ fn substitute_shadowed(node: &Node, replacements: &HashMap<char, Node>, index: c
     scoped.remove(&index);
 
     substitute(node, &scoped)
+}
+
+// Replaces user function calls by their substituted bodies for symbolic work
+pub fn expand_calls(
+    node: &Node,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+    depth: usize,
+) -> Node {
+    if depth > MAX_CALL_DEPTH {
+        return node.clone();
+    }
+
+    match node {
+        Node::Variable(_) | Node::IntNumber(_) | Node::FloatNumber(_) => node.clone(),
+        Node::Neg(inner) => Node::Neg(Box::new(expand_calls(inner, functions, depth))),
+        Node::Add(left, right) => Node::Add(
+            Box::new(expand_calls(left, functions, depth)),
+            Box::new(expand_calls(right, functions, depth)),
+        ),
+        Node::Sub(left, right) => Node::Sub(
+            Box::new(expand_calls(left, functions, depth)),
+            Box::new(expand_calls(right, functions, depth)),
+        ),
+        Node::Mul(left, right) => Node::Mul(
+            Box::new(expand_calls(left, functions, depth)),
+            Box::new(expand_calls(right, functions, depth)),
+        ),
+        Node::Div(left, right) => Node::Div(
+            Box::new(expand_calls(left, functions, depth)),
+            Box::new(expand_calls(right, functions, depth)),
+        ),
+        Node::Pow(base, exponent) => Node::Pow(
+            Box::new(expand_calls(base, functions, depth)),
+            Box::new(expand_calls(exponent, functions, depth)),
+        ),
+        Node::Builtin(function, arguments) => Node::Builtin(
+            *function,
+            arguments
+                .iter()
+                .map(|argument| expand_calls(argument, functions, depth))
+                .collect(),
+        ),
+        Node::Call(name, arguments) => {
+            let arguments: Vec<Node> = arguments
+                .iter()
+                .map(|argument| expand_calls(argument, functions, depth))
+                .collect();
+
+            match functions.get(name) {
+                Some((params, body)) if params.len() == arguments.len() => {
+                    let replacements: HashMap<char, Node> =
+                        params.iter().copied().zip(arguments).collect();
+                    let expanded = substitute(body, &replacements);
+
+                    expand_calls(&expanded, functions, depth + 1)
+                }
+                _ => Node::Call(name.clone(), arguments),
+            }
+        }
+        Node::Sum(index, lower, upper, body) => Node::Sum(
+            *index,
+            Box::new(expand_calls(lower, functions, depth)),
+            Box::new(expand_calls(upper, functions, depth)),
+            Box::new(expand_calls(body, functions, depth)),
+        ),
+        Node::Product(index, lower, upper, body) => Node::Product(
+            *index,
+            Box::new(expand_calls(lower, functions, depth)),
+            Box::new(expand_calls(upper, functions, depth)),
+            Box::new(expand_calls(body, functions, depth)),
+        ),
+    }
 }
 
 // --- simplification ----------------------------------------------------

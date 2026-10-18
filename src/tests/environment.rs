@@ -188,6 +188,18 @@ fn test_function_calls_compose_in_definition() {
 }
 
 #[test]
+fn test_identity_function_definition() {
+    let mut environment = Environment::new();
+
+    environment.execute("f(x)=x").unwrap();
+
+    assert!(matches!(
+        environment.execute("f(7)").unwrap(),
+        Outcome::Value(value) if value == 7.0
+    ));
+}
+
+#[test]
 fn test_variable_can_be_assigned_a_call() {
     let mut environment = Environment::new();
 

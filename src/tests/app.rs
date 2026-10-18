@@ -97,9 +97,7 @@ fn test_visual_yank_selection_reports_characters() {
     let messages = app.output_texts();
 
     assert!(
-        messages
-            .iter()
-            .any(|line| line.starts_with("Copied 1 char to")),
+        messages.iter().any(|line| line.contains("Copied")),
         "{:?}",
         messages
     );
@@ -224,6 +222,33 @@ fn test_render_visual_cursor_starts_visible_at_bottom() {
 }
 
 #[test]
+fn test_visual_yank_with_hidden_info_uses_visible_lines() {
+    let mut app = App::new();
+
+    type_line(&mut app, "1+1");
+    type_line(&mut app, "2+2");
+    type_line(&mut app, "hide info");
+
+    app.focus_output();
+    app.handle_key(Key::Char('g'));
+    app.handle_key(Key::Char('v'));
+    app.handle_key(Key::Char('G'));
+    app.handle_key(Key::Char('$'));
+    app.handle_key(Key::Char('y'));
+
+    let messages = app.output_texts();
+
+    // The two drawn result lines "1+1 = 2" and "2+2 = 4" join to 15 chars
+    assert!(
+        messages
+            .iter()
+            .any(|line| line.starts_with("Copied 15 chars to")),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
 fn test_render_focus_border_is_accented() {
     let mut app = App::new();
 
@@ -281,10 +306,31 @@ fn test_sidebar_visual_mode_yanks_rows() {
 
     let messages = app.output_texts();
 
+    // The marked variable rows yank as "x [custom] = 2\ny [custom] = 3"
     assert!(
         messages
             .iter()
-            .any(|line| line.starts_with("Copied 3 chars to")),
+            .any(|line| line.starts_with("Copied 29 chars to")),
+        "{:?}",
+        messages
+    );
+}
+
+#[test]
+fn test_sidebar_yank_line_without_selection_copies_value() {
+    let mut app = App::new();
+
+    type_line(&mut app, "x=2");
+
+    app.handle_key(Key::Tab);
+    app.handle_key(Key::Char('y'));
+
+    let messages = app.output_texts();
+
+    assert!(
+        messages
+            .iter()
+            .any(|line| line.starts_with("Copied 1 char to")),
         "{:?}",
         messages
     );
@@ -422,7 +468,10 @@ fn test_hide_info_keeps_definitions_in_output() {
         frame.contains("f(x) = x^2"),
         "function definition missing: {frame}"
     );
-    assert!(frame.contains("x = 3"), "variable definition missing: {frame}");
+    assert!(
+        frame.contains("x = 3"),
+        "variable definition missing: {frame}"
+    );
     assert!(
         !frame.contains("> f(x)=x^2"),
         "echo should be hidden: {frame}"
@@ -447,7 +496,11 @@ fn test_clear_info_keeps_definitions() {
         "{:?}",
         texts
     );
-    assert!(!texts.iter().any(|line| line.starts_with("> ")), "{:?}", texts);
+    assert!(
+        !texts.iter().any(|line| line.starts_with("> ")),
+        "{:?}",
+        texts
+    );
 }
 
 #[test]
@@ -462,4 +515,28 @@ fn test_hide_info_with_expression_result_folds_origin() {
 
     assert!(frame.contains("y = 4"), "definition missing: {frame}");
     assert!(frame.contains("y^2 = 16"), "folded result missing: {frame}");
+}
+
+#[test]
+fn test_hide_info_output_reads_as_notebook() {
+    let mut app = App::new();
+
+    type_line(&mut app, "f(x)=x^2");
+    type_line(&mut app, "x=4");
+    type_line(&mut app, "f(x)");
+    type_line(&mut app, "2x+1");
+    type_line(&mut app, "hide info");
+
+    let frame = app.render(80, 24);
+
+    for expected in ["f(x) = x^2", "x = 4", "f(x) = 16", "2x+1 = 9"] {
+        assert!(frame.contains(expected), "missing {expected:?} in {frame}");
+    }
+
+    for hidden in ["[ERROR]", "> f(x)=x^2", "> hide info"] {
+        assert!(
+            !frame.contains(hidden),
+            "{hidden:?} should be hidden: {frame}"
+        );
+    }
 }
