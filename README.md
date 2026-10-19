@@ -408,7 +408,7 @@ In interactive mode, individual panes can be toggled:
 
 ```
 
-Supported pane names are `plot`, `vars`, `funcs`, `eq`, `info`, and `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`).
+Supported pane names are `plot`, `var` (also `vars`, `variables`), `fn` (also `funcs`, `functions`), `eq`, `info`, `timestamp`, and `color`, plus `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`). `timestamp` toggles the `[hh:mm:ss]` stamps on output lines, and `color` toggles identifier colouring; `all` applies only to the panes, not to `timestamp` or `color`.
 
 Definitions are content rather than status, so they stay in the output while `info` is hidden. The output then reads like a notebook that records every assignment and function definition next to the values it produced:
 
@@ -432,7 +432,7 @@ The following commands are recognized by the command parser:
 | `quit` or `exit` | Exit the application |
 | `plot <expression>` | Plot one or more expressions |
 | `scales`, `scales on`, `scales off` | Control axis labels |
-| `show <pane>` / `hide <pane>` | Toggle panes: `plot`, `vars`, `funcs`, `eq`, `info`, `all` |
+| `show <pane>` / `hide <pane>` | Toggle panes: `plot`, `var`, `fn`, `eq`, `info`, `timestamp`, `color`, `all` |
 | `clear` | Clear the output area in interactive mode (kept restorable with `history`) |
 | `clear info` | Remove info and echo lines from the output |
 | `clear vars` | Remove all variable definitions |
@@ -448,6 +448,7 @@ The following commands are recognized by the command parser:
 | `int <expression>, <var>` | Integrate with respect to a chosen variable |
 | `int <expression>, <a>, <b>` | Compute a definite integral |
 | `solve <equation>, <variable>` | Solve an equation for a variable |
+| `eq <equation>` or `eq <equation>, <variable>` | Solve an equation (default `x`) and store it in the Equations pane |
 | `print <name or expression>` | Print a function, variable, or expression |
 
 *(Mode-specific behavior: Some commands are implemented differently in line-oriented mode. Help is only available in interactive mode, while commands that manipulate the interactive display, plots, history, or scales may have no visible effect in line-oriented mode.)*

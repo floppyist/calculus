@@ -491,10 +491,12 @@ impl Environment {
                 let antiderivative = algebra::integrate(&ast, variable, &functions)
                     .ok_or(EvalError::NotIntegrable)?;
                 let letter = self.next_constant_letter();
-                let with_constant = algebra::simplify(&Node::Add(
+                // Append the constant without a full simplify: adding a term
+                // would expand powers such as (x+2)^4 back into a polynomial
+                let with_constant = Node::Add(
                     Box::new(algebra::simplify(&antiderivative)),
                     Box::new(Node::Variable(letter)),
-                ));
+                );
                 let (name, source) = self.define_function(&with_constant, variable);
 
                 Ok(IntegralOutcome::Function {

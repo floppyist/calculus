@@ -4,6 +4,9 @@ use std::path::Path;
 // Persisted session state: definitions, plotted curves, scale visibility and input history
 pub struct State {
     pub scales: bool,
+    pub timestamps: bool,
+    pub colors: bool,
+    pub hide_info: bool,
     pub definitions: Vec<String>,
     pub plots: Vec<String>,
     pub equations: Vec<String>,
@@ -23,6 +26,9 @@ pub fn save(path: &Path, state: &State) -> std::io::Result<()> {
     let mut contents = String::new();
 
     contents.push_str(&format!("scales={}\n", if state.scales { 1 } else { 0 }));
+    contents.push_str(&format!("timestamps={}\n", if state.timestamps { 1 } else { 0 }));
+    contents.push_str(&format!("colors={}\n", if state.colors { 1 } else { 0 }));
+    contents.push_str(&format!("hide_info={}\n", if state.hide_info { 1 } else { 0 }));
 
     for definition in &state.definitions {
         contents.push_str(definition);
@@ -55,6 +61,9 @@ pub fn load(path: &Path) -> Option<State> {
     let contents = fs::read_to_string(path).ok()?;
     let mut state = State {
         scales: false,
+        timestamps: true,
+        colors: true,
+        hide_info: false,
         definitions: Vec::new(),
         plots: Vec::new(),
         equations: Vec::new(),
@@ -70,6 +79,21 @@ pub fn load(path: &Path) -> Option<State> {
 
         if let Some(value) = line.strip_prefix("scales=") {
             state.scales = value.trim() == "1";
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("timestamps=") {
+            state.timestamps = value.trim() != "0";
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("colors=") {
+            state.colors = value.trim() != "0";
+            continue;
+        }
+
+        if let Some(value) = line.strip_prefix("hide_info=") {
+            state.hide_info = value.trim() == "1";
             continue;
         }
 

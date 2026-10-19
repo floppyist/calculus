@@ -201,6 +201,13 @@ fn test_antiderivative_identity_substitution() {
 }
 
 #[test]
+fn test_antiderivative_power_substitution() {
+    assert_eq!(antiderivative("sin(x)^4*cos(x)"), "1/5*sin(x)^5 + C");
+    assert_eq!(antiderivative("sin(x)*cos(x)^2"), "-1/3*cos(x)^3 + C");
+    assert_eq!(antiderivative("x*(x^2+1)^3"), "1/8*(x^2 + 1)^4 + C");
+}
+
+#[test]
 fn test_antiderivative_logarithmic_derivative() {
     assert_eq!(antiderivative("2*x/(x^2+1)"), "ln(abs(x^2 + 1)) + C");
     assert_eq!(antiderivative("3*x^2/(x^3+1)"), "ln(abs(x^3 + 1)) + C");
@@ -286,6 +293,17 @@ fn test_integrate_stores_auto_named_function() {
     let value = environment.execute("f(3)").unwrap();
     let formatted = crate::ui::format::format_outcome(value);
     assert_eq!(formatted, "= 9");
+}
+
+#[test]
+fn test_integrate_keeps_power_compact() {
+    let mut environment = Environment::new();
+    let outcome = environment.integrate("(x+2)^3", None, None).unwrap();
+
+    match outcome {
+        IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/4*(x + 2)^4 + C"),
+        IntegralOutcome::Value(_) => panic!("expected a function"),
+    }
 }
 
 #[test]

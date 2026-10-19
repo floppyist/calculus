@@ -2064,9 +2064,18 @@ fn integrate_substitution(
         return Some(mul(ratio, antiderivative));
     }
 
-    // Second mode: rest = c * F' for one factor F, so u = F and rest = c F^2 / 2
+    // Second mode: rest = c * u' for a factor u^n, so the antiderivative is
+    // c * u^(n+1)/(n+1) (the power rule for a general inner function u)
     for (index, factor) in factors.iter().enumerate() {
-        let Some(derivative) = diff(factor, name, functions, 0) else {
+        let (base, power) = match factor {
+            Node::Pow(base, exponent) => match as_number(exponent) {
+                Some(power) => ((**base).clone(), power),
+                None => continue,
+            },
+            other => (other.clone(), 1.0),
+        };
+
+        let Some(derivative) = diff(&base, name, functions, 0) else {
             continue;
         };
 
@@ -2084,10 +2093,9 @@ fn integrate_substitution(
             continue;
         }
 
-        return Some(mul(
-            div(ratio, number(2.0)),
-            pow((*factor).clone(), number(2.0)),
-        ));
+        let antiderivative = power_antiderivative(base, power)?;
+
+        return Some(mul(ratio, antiderivative));
     }
 
     None

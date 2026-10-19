@@ -108,6 +108,14 @@ fn test_parse_show_hide() {
         Some(Command::Show(PaneArg::All))
     ));
     assert!(matches!(
+        command::parse_command("hide var"),
+        Some(Command::Hide(PaneArg::Variables))
+    ));
+    assert!(matches!(
+        command::parse_command("show fn"),
+        Some(Command::Show(PaneArg::Functions))
+    ));
+    assert!(matches!(
         command::parse_command("hide nope"),
         Some(Command::Error(_))
     ));
@@ -266,6 +274,30 @@ fn test_parse_solve() {
     assert!(matches!(
         command::parse_command("solve x^2-1=0"),
         Some(Command::Error(_))
+    ));
+}
+
+#[test]
+fn test_parse_equation() {
+    match command::parse_command("eq x^2=4") {
+        Some(Command::Equation { equation, variable }) => {
+            assert_eq!(equation, "x^2=4");
+            assert!(variable.is_none());
+        }
+        _ => panic!("expected equation"),
+    }
+
+    match command::parse_command("eq f(x)=0, y") {
+        Some(Command::Equation { equation, variable }) => {
+            assert_eq!(equation, "f(x)=0");
+            assert_eq!(variable.as_deref(), Some("y"));
+        }
+        _ => panic!("expected equation with variable"),
+    }
+
+    assert!(matches!(
+        command::parse_command("equation (x+1)^2=4, x"),
+        Some(Command::Equation { .. })
     ));
 }
 

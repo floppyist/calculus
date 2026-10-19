@@ -382,6 +382,29 @@ fn test_hide_info_hides_echo_and_errors() {
 }
 
 #[test]
+fn test_error_shows_in_frame_and_not_in_history() {
+    let mut app = App::new();
+
+    type_line(&mut app, "zzz");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("[ERROR]"), "error should appear: {frame}");
+    assert!(
+        !app.output_texts()
+            .iter()
+            .any(|line| line.contains("[ERROR]")),
+        "error should stay out of the history"
+    );
+
+    type_line(&mut app, "1+1");
+
+    let frame = app.render(80, 24);
+
+    assert!(!frame.contains("[ERROR]"), "error should clear: {frame}");
+}
+
+#[test]
 fn test_empty_panes_stay_hidden_until_content() {
     let mut app = App::new();
 
@@ -413,6 +436,9 @@ fn test_restore_reveals_equations_pane() {
     let mut app = App::new();
     let state = State {
         scales: false,
+        timestamps: true,
+        colors: true,
+        hide_info: false,
         definitions: vec!["f(x) = x^2".to_string()],
         plots: Vec::new(),
         equations: vec!["x^2=4, x".to_string()],
@@ -650,6 +676,40 @@ fn test_hide_info_output_reads_as_notebook() {
             "{hidden:?} should be hidden: {frame}"
         );
     }
+
+    // Timestamps are on by default; hiding them should remove the bracket prefix
+    let mut stamp_visible = false;
+    for hour in 0..24 {
+        for minute in 0..60 {
+            let pattern = format!("[{:02}:{:02}:", hour, minute);
+            if frame.contains(&pattern) {
+                stamp_visible = true;
+                break;
+            }
+        }
+        if stamp_visible {
+            break;
+        }
+    }
+    assert!(stamp_visible, "expected timestamps visible: {frame}");
+
+    type_line(&mut app, "hide timestamp");
+
+    let frame = app.render(80, 24);
+    let mut stamp_visible = false;
+    for hour in 0..24 {
+        for minute in 0..60 {
+            let pattern = format!("[{:02}:{:02}:", hour, minute);
+            if frame.contains(&pattern) {
+                stamp_visible = true;
+                break;
+            }
+        }
+        if stamp_visible {
+            break;
+        }
+    }
+    assert!(!stamp_visible, "expected timestamps hidden: {frame}");
 }
 
 #[test]
@@ -667,6 +727,39 @@ fn test_equations_pane_shows_solutions_below() {
     assert!(
         frame.contains("(x = 2, x = -2)"),
         "solutions preview missing: {frame}"
+    );
+}
+
+#[test]
+fn test_eq_command_stores_equation_for_x() {
+    let mut app = App::new();
+
+    type_line(&mut app, "eq x^2=4");
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        frame.contains("  x^2=4"),
+        "equation should be stored: {frame}"
+    );
+    assert!(
+        frame.contains("(x = 2, x = -2)"),
+        "solutions preview missing: {frame}"
+    );
+}
+
+#[test]
+fn test_eq_command_solves_generated_antiderivative() {
+    let mut app = App::new();
+
+    type_line(&mut app, "diff x^2");
+    type_line(&mut app, "eq f(x)=0");
+
+    let texts = app.output_texts();
+
+    assert!(
+        texts.iter().any(|line| line == "x = 0"),
+        "expected the root of the generated function: {texts:?}"
     );
 }
 

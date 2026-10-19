@@ -199,6 +199,38 @@ fn run_plain() -> io::Result<()> {
                         },
                     }
                 }
+                Command::Equation { equation, variable } => {
+                    let parsed_variable = variable.as_deref().map(str::trim).and_then(|name| {
+                        let mut chars = name.chars();
+
+                        match (chars.next(), chars.next()) {
+                            (Some(letter), None) if letter.is_ascii_alphabetic() => Some(letter),
+                            _ => None,
+                        }
+                    });
+
+                    if variable.is_some() && parsed_variable.is_none() {
+                        writeln!(
+                            stdout,
+                            "[ERROR]: unknown solve variable '{}'",
+                            variable.as_deref().unwrap_or("").trim()
+                        )?;
+
+                        continue;
+                    }
+
+                    match environment.solve(&equation, parsed_variable.unwrap_or('x')) {
+                        Ok(outcome) if outcome.solutions.is_empty() => {
+                            writeln!(stdout, "no real solutions")?;
+                        }
+                        Ok(outcome) => {
+                            for solution in outcome.solutions {
+                                writeln!(stdout, "{} = {}", outcome.variable, solution)?;
+                            }
+                        }
+                        Err(error) => writeln!(stdout, "{}", error)?,
+                    }
+                }
                 Command::Error(message) => writeln!(stdout, "{}", message)?,
             }
 

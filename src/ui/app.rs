@@ -65,6 +65,7 @@ const HELP_LINES: &[&str] = &[
     "  int <expr>, y             integrate with respect to y",
     "  int <expr>, a, b          definite integral from a to b",
     "  solve <eq>, x             solve an equation for x",
+    "  eq <eq>[, x]              solve an equation and store it",
     "  sum(k, a, b, expr)        summation over k = a .. b (also ∑)",
     "  prod(k, a, b, expr)       product over k = a .. b (also ∏)",
     "  print <name | expr>       print a function, variable or expression",
@@ -84,8 +85,10 @@ const HELP_LINES: &[&str] = &[
     "  clear all                 wipe the session and the state file",
     "  clear history             wipe the output and forget it",
     "  history                   restore the output cleared last",
-    "  show / hide <pane>        panes: plot, vars, funcs, eq",
+    "  show / hide <pane>        panes: plot, var, fn, eq",
     "  show / hide info          toggle the status and info lines",
+    "  show / hide timestamp     toggle the [hh:mm:ss] stamps",
+    "  show / hide color         toggle identifier colouring",
     "  show / hide all           apply to every pane above",
     "",
     "Editing (vi mode, Esc = normal)",
@@ -196,6 +199,10 @@ pub struct App {
     show_vars: bool,
     show_funcs: bool,
     show_eq: bool,
+    timestamps_visible: bool,
+    colors_visible: bool,
+    // Last failed command, shown at the lower-left of the Output pane
+    status_error: Option<String>,
     // Output stashed by `clear`, brought back by the `history` command
     cleared: Vec<OutputLine>,
     should_quit: bool,
@@ -229,6 +236,9 @@ impl App {
             show_vars: false,
             show_funcs: false,
             show_eq: false,
+            timestamps_visible: true,
+            colors_visible: true,
+            status_error: None,
             cleared: Vec::new(),
             should_quit: false,
         };
@@ -254,6 +264,9 @@ impl App {
     // Applies a loaded session state
     pub fn restore(&mut self, state: &State) {
         self.scales_visible = state.scales;
+        self.timestamps_visible = state.timestamps;
+        self.colors_visible = state.colors;
+        self.hide_info = state.hide_info;
         self.editor.set_history(state.history.clone());
 
         for definition in &state.definitions {
@@ -285,6 +298,9 @@ impl App {
 
         let state = State {
             scales: self.scales_visible,
+            timestamps: self.timestamps_visible,
+            colors: self.colors_visible,
+            hide_info: self.hide_info,
             definitions,
             plots: self
                 .curves
@@ -640,9 +656,13 @@ impl App {
 
             // Without the echo line the result carries its own input
             let text = self.display_text(line_index);
+            let stamp = if self.timestamps_visible {
+                line.stamp.as_deref()
+            } else {
+                None
+            };
 
-            for (stamp, chunk, start) in wrap_with_stamp(line.stamp.as_deref(), &text, inner.width)
-            {
+            for (stamp, chunk, start) in wrap_with_stamp(stamp, &text, inner.width) {
                 wrapped.push((stamp, chunk, line_index, start));
             }
         }
@@ -734,6 +754,27 @@ impl App {
                 canvas.put(x + offset as isize, y, ch, style);
             }
         }
+
+        self.draw_status_error(canvas, rect);
+    }
+
+    // Last failure, indented like the pane title on the bottom border
+    fn draw_status_error(&self, canvas: &mut Canvas, rect: Rect) {
+        let Some(error) = &self.status_error else {
+            return;
+        };
+
+        if self.hide_info || rect.height < 2 || rect.width < 4 {
+            return;
+        }
+
+        canvas.print_clipped(
+            rect.x as isize + 2,
+            rect.bottom() as isize - 1,
+            rect.width.saturating_sub(4),
+            error,
+            error_style(),
+        );
     }
 
     fn draw_plot(&self, canvas: &mut Canvas, rect: Rect) {
@@ -2458,6 +2499,7 @@ impl App {
         self.scroll = 0;
         self.input_mode = InputMode::Insert;
         self.pending_d = false;
+        self.status_error = None;
 
         if trimmed.is_empty() {
             return;
@@ -2488,7 +2530,7 @@ impl App {
                 }
                 _ => self.push_result(trimmed.clone(), result_style(), format_outcome(outcome)),
             },
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
         }
 
         self.auto_reveal(had_vars, had_funcs, had_eqs);
@@ -2581,12 +2623,16 @@ impl App {
                 self.command_solve(&equation, &variable);
                 self.persist();
             }
+            Command::Equation { equation, variable } => {
+                self.command_equation(&equation, variable.as_deref());
+                self.persist();
+            }
             Command::ClearEquations => {
                 self.environment.clear_equations();
                 self.push_info(hint_style(), "equations cleared".to_string());
                 self.persist();
             }
-            Command::Error(message) => self.push_info(error_style(), message),
+            Command::Error(message) => self.push_error(message),
         }
     }
 
@@ -2596,7 +2642,7 @@ impl App {
                 let origin = format!("simp {}", expression.trim());
                 self.push_result(origin, result_style(), format!("= {}", source));
             }
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
         }
     }
 
@@ -2605,16 +2651,13 @@ impl App {
             Ok((name, source)) => {
                 self.push_output(result_style(), format!("{}(x) = {}", name, source));
             }
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
         }
     }
 
     fn command_print(&mut self, argument: &str) {
         if argument.trim().is_empty() {
-            self.push_info(
-                error_style(),
-                "usage: print <function|variable|expression>".to_string(),
-            );
+            self.push_error("usage: print <function|variable|expression>".to_string());
             return;
         }
 
@@ -2641,7 +2684,7 @@ impl App {
             Ok(PrintTarget::Expression(outcome)) => {
                 self.push_output(result_style(), format_outcome(outcome));
             }
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
         }
     }
 
@@ -2655,10 +2698,7 @@ impl App {
             Some(name) => match single_variable(name.trim()) {
                 Some(name) => Some(name),
                 None => {
-                    self.push_info(
-                        error_style(),
-                        format!("[ERROR]: unknown integration variable '{}'", name),
-                    );
+                    self.push_error(format!("[ERROR]: unknown integration variable '{}'", name));
                     return;
                 }
             },
@@ -2680,7 +2720,7 @@ impl App {
             Ok(IntegralOutcome::Value(value)) => {
                 self.push_output(result_style(), format!("= {}", format_number(value)));
             }
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
         }
     }
 
@@ -2688,10 +2728,7 @@ impl App {
         let variable = match single_variable(variable.trim()) {
             Some(name) => name,
             None => {
-                self.push_info(
-                    error_style(),
-                    format!("[ERROR]: unknown solve variable '{}'", variable.trim()),
-                );
+                self.push_error(format!("[ERROR]: unknown solve variable '{}'", variable.trim()));
                 return;
             }
         };
@@ -2708,7 +2745,37 @@ impl App {
                     );
                 }
             }
-            Err(error) => self.push_info(error_style(), format!("{}", error)),
+            Err(error) => self.push_error(format!("{}", error)),
+        }
+    }
+
+    // Stores a solved equation in the Equations pane; without an explicit
+    // variable the equation is solved for x
+    fn command_equation(&mut self, equation: &str, variable: Option<&str>) {
+        let variable = match variable {
+            Some(name) => match single_variable(name.trim()) {
+                Some(name) => name,
+                None => {
+                    self.push_error(format!("[ERROR]: unknown solve variable '{}'", name.trim()));
+                    return;
+                }
+            },
+            None => 'x',
+        };
+
+        match self.environment.solve(equation, variable) {
+            Ok(outcome) if outcome.solutions.is_empty() => {
+                self.push_output(result_style(), "no real solutions".to_string());
+            }
+            Ok(outcome) => {
+                for solution in outcome.solutions {
+                    self.push_output(
+                        result_style(),
+                        format!("{} = {}", outcome.variable, solution),
+                    );
+                }
+            }
+            Err(error) => self.push_error(format!("{}", error)),
         }
     }
 
@@ -2805,6 +2872,13 @@ impl App {
                 // Hidden lines may have held the cursor or a selection end
                 self.snap_output_to_visible();
             }
+            PaneArg::Timestamp => {
+                self.timestamps_visible = show;
+
+                // Timestamps change the wrapped width, so the cursor may drift
+                self.snap_output_to_visible();
+            }
+            PaneArg::Color => self.colors_visible = show,
             PaneArg::All => {
                 self.show_plot = show;
                 self.show_vars = show;
@@ -2827,10 +2901,7 @@ impl App {
         let rest = rest.trim();
 
         if rest.is_empty() {
-            self.push_info(
-                error_style(),
-                "usage: plot <expression>[, <expression>]".to_string(),
-            );
+            self.push_error("usage: plot <expression>[, <expression>]".to_string());
             return;
         }
 
@@ -2908,7 +2979,7 @@ impl App {
         }
 
         for error in &errors {
-            self.push_info(error_style(), error.clone());
+            self.push_error(error.clone());
         }
 
         if curves.is_empty() {
@@ -2916,6 +2987,7 @@ impl App {
         }
 
         self.curves = curves;
+        self.show_plot = true;
     }
 
     // Some("f") when the node is exactly f(x) for an existing user function
@@ -2950,6 +3022,12 @@ impl App {
 
     fn push_info(&mut self, style: Style, text: String) {
         self.push_line(style, text, Kind::Info);
+    }
+
+    // Failures are shown at the lower-left of the Output pane, not in the
+    // scrolling history, and clear as soon as the next command is submitted
+    fn push_error(&mut self, text: String) {
+        self.status_error = Some(text);
     }
 
     // A definition stays in the output as notebook content

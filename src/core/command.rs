@@ -28,6 +28,10 @@ pub enum Command {
         equation: String,
         variable: String,
     },
+    Equation {
+        equation: String,
+        variable: Option<String>,
+    },
     Error(String),
 }
 
@@ -39,6 +43,8 @@ pub enum PaneArg {
     Functions,
     Equations,
     Info,
+    Timestamp,
+    Color,
     All,
 }
 
@@ -170,6 +176,29 @@ pub fn parse_command(input: &str) -> Option<Command> {
         });
     }
 
+    if let Some(rest) = keyword_argument(trimmed, &["eq", "equation"]) {
+        let parts: Vec<String> = split_top_level(rest, ',')
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .collect();
+
+        return Some(match parts.as_slice() {
+            [equation] if !equation.is_empty() => Command::Equation {
+                equation: equation.clone(),
+                variable: None,
+            },
+            [equation, variable] if !equation.is_empty() && !variable.is_empty() => {
+                Command::Equation {
+                    equation: equation.clone(),
+                    variable: Some(variable.clone()),
+                }
+            }
+            _ => Command::Error(
+                "[ERROR]: eq expects '<equation>' or '<equation>, <variable>'".to_string(),
+            ),
+        });
+    }
+
     if let Some(rest) = keyword_argument(trimmed, &["solve"]) {
         let parts: Vec<String> = split_top_level(rest, ',')
             .into_iter()
@@ -211,10 +240,12 @@ fn keyword_argument<'a>(input: &'a str, keywords: &[&str]) -> Option<&'a str> {
 fn pane_argument(word: &str) -> Option<PaneArg> {
     match word {
         "plot" | "plots" => Some(PaneArg::Plot),
-        "vars" | "variables" => Some(PaneArg::Variables),
-        "funcs" | "functions" => Some(PaneArg::Functions),
+        "var" | "vars" | "variables" => Some(PaneArg::Variables),
+        "fn" | "funcs" | "functions" => Some(PaneArg::Functions),
         "eq" | "equations" => Some(PaneArg::Equations),
         "info" => Some(PaneArg::Info),
+        "timestamp" | "timestamps" => Some(PaneArg::Timestamp),
+        "color" | "colors" => Some(PaneArg::Color),
         "all" => Some(PaneArg::All),
         _ => None,
     }
