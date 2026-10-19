@@ -109,6 +109,20 @@ fn test_simplify_keeps_exact_ratio() {
 }
 
 #[test]
+fn test_simplify_expands_integer_powers() {
+    assert_eq!(simplified("(x+1)^2 - x^2 - 2*x"), "1");
+    assert_eq!(simplified("(x+1)^3"), "(x + 1)^3");
+}
+
+#[test]
+fn test_simplify_polynomial_division() {
+    assert_eq!(simplified("(x^2 - 1)/(x - 1)"), "x + 1");
+    assert_eq!(simplified("(x^3 - 1)/(x - 1)"), "x^2 + x + 1");
+    assert_eq!(simplified("(2*x^2 + 2*x)/(2*x)"), "x + 1");
+    assert_eq!(simplified("(x^2 + 1)/(x + 1)"), "(x^2 + 1)/(x + 1)");
+}
+
+#[test]
 fn test_derivative_polynomial() {
     assert_eq!(derivative("x^3"), "3x^2");
     assert_eq!(derivative("x^2+2*x+1"), "2x + 2");
@@ -177,9 +191,48 @@ fn test_antiderivative_substitution() {
 }
 
 #[test]
+fn test_antiderivative_substitution_of_exp() {
+    assert_eq!(antiderivative("2*x*e^(x^2)"), "e^x^2 + C");
+}
+
+#[test]
+fn test_antiderivative_identity_substitution() {
+    assert_eq!(antiderivative("sin(x)*cos(x)"), "-1/2*cos(x)^2 + C");
+}
+
+#[test]
+fn test_antiderivative_logarithmic_derivative() {
+    assert_eq!(antiderivative("2*x/(x^2+1)"), "ln(abs(x^2 + 1)) + C");
+    assert_eq!(antiderivative("3*x^2/(x^3+1)"), "ln(abs(x^3 + 1)) + C");
+}
+
+#[test]
+fn test_antiderivative_arctangent() {
+    assert_eq!(antiderivative("1/(x^2+1)"), "atan(x) + C");
+    assert_eq!(antiderivative("1/(4+x^2)"), "1/2*atan(1/2*x) + C");
+}
+
+#[test]
+fn test_antiderivative_exponential_reciprocal() {
+    assert_eq!(
+        antiderivative("1/(e^(3*x)+1)"),
+        "1/3*ln(abs(e^(3x)/(e^(3x) + 1))) + C"
+    );
+    assert_eq!(
+        antiderivative("3/(e^(3*x)+1)"),
+        "ln(abs(e^(3x)/(e^(3x) + 1))) + C"
+    );
+}
+
+#[test]
 fn test_antiderivative_by_parts() {
     assert_eq!(antiderivative("(2*x+1)*e^(2*x)"), "e^(2x)*x + C");
     assert_eq!(antiderivative("x*e^(2*x)"), "1/2*e^(2x)*x - 1/4*e^(2x) + C");
+}
+
+#[test]
+fn test_antiderivative_by_parts_prefers_logarithm() {
+    assert_eq!(antiderivative("x*ln(x)"), "1/2*ln(x)x^2 - 1/4*x^2 + C");
 }
 
 #[test]

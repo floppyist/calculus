@@ -16,6 +16,9 @@ const P_NEG: u8 = 3;
 const P_POW: u8 = 4;
 const P_ATOM: u8 = 5;
 
+// Integer powers up to this bound are multiplied out during simplification
+const MAX_EXPAND_POWER: f64 = 16.0;
+
 // --- rendering ---------------------------------------------------------
 
 // Renders a node back to infix source text with minimal parentheses
@@ -274,6 +277,10 @@ impl Coeff {
 
     fn one() -> Coeff {
         Coeff::from_i128(1)
+    }
+
+    fn zero() -> Coeff {
+        Coeff::from_i128(0)
     }
 
     fn is_zero(self) -> bool {
@@ -821,13 +828,25 @@ fn expand(node: &Node) -> Node {
         Node::Sub(left, right) => sub(expand(left), expand(right)),
         Node::Mul(left, right) => distribute(expand(left), expand(right)),
         Node::Div(numerator, denominator) => div(expand(numerator), expand(denominator)),
-        Node::Pow(base, exponent) => pow(expand(base), (**exponent).clone()),
-        Node::Builtin(function, arguments) => {
-            Node::Builtin(*function, arguments.iter().map(expand).collect())
+        Node::Pow(base, exponent) => {
+            let base = expand(base);
+
+            match as_integer(exponent) {
+                Some(power) if (1.0..=MAX_EXPAND_POWER).contains(&power) => {
+                    let mut result = base.clone();
+
+                    for _ in 1..power as usize {
+                        result = distribute(result, base.clone());
+                    }
+
+                    result
+                }
+                _ => pow(base, (**exponent).clone()),
+            }
         }
-        Node::Call(name, arguments) => {
-            Node::Call(name.clone(), arguments.iter().map(expand).collect())
-        }
+        // Function arguments stay as they are: expanding a power inside a call
+        // like sin(x^2) would rewrite it to sin(x x)
+        Node::Builtin(..) | Node::Call(..) => node.clone(),
         Node::Sum(index, lower, upper, body) => Node::Sum(
             *index,
             Box::new(expand(lower)),
@@ -1079,7 +1098,245 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
     let top = with_coefficient(top_coefficient, bases_to_node(remaining));
     let bottom = with_coefficient(bottom_coefficient, bases_to_node(bottom_bases));
 
+    // An exact polynomial division reads far better than the fraction
+    if let Some(quotient) = polynomial_quotient(&top, &bottom) {
+        return quotient;
+    }
+
     div(top, bottom)
+}
+
+// Exact univariate polynomial division: Some(quotient) when the remainder is zero
+fn polynomial_quotient(top: &Node, bottom: &Node) -> Option<Node> {
+    let name = single_variable_in(top).filter(|name| single_variable_in(bottom) == Some(*name))?;
+    let numerator = to_polynomial(top, name)?;
+    let denominator = to_polynomial(bottom, name)?;
+
+    let (quotient, remainder) = poly_divmod(&numerator, &denominator)?;
+
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    Some(simplify(&poly_to_node(&quotient, name)))
+}
+
+// The only variable referenced by the node, if there is exactly one
+fn single_variable_in(node: &Node) -> Option<char> {
+    let mut names = Vec::new();
+
+    collect_variable_names(node, &mut names);
+    names.sort();
+    names.dedup();
+
+    match names.as_slice() {
+        [name] => Some(*name),
+        _ => None,
+    }
+}
+
+fn collect_variable_names(node: &Node, out: &mut Vec<char>) {
+    match node {
+        Node::Variable(name) => out.push(*name),
+        Node::Neg(inner) => collect_variable_names(inner, out),
+        Node::Add(left, right) | Node::Sub(left, right) | Node::Mul(left, right) => {
+            collect_variable_names(left, out);
+            collect_variable_names(right, out);
+        }
+        Node::Div(numerator, denominator) => {
+            collect_variable_names(numerator, out);
+            collect_variable_names(denominator, out);
+        }
+        Node::Pow(base, exponent) => {
+            collect_variable_names(base, out);
+            collect_variable_names(exponent, out);
+        }
+        Node::Builtin(_, arguments) => {
+            for argument in arguments {
+                collect_variable_names(argument, out);
+            }
+        }
+        Node::Call(_, arguments) => {
+            for argument in arguments {
+                collect_variable_names(argument, out);
+            }
+        }
+        Node::Sum(index, lower, upper, body) => {
+            out.push(*index);
+            collect_variable_names(lower, out);
+            collect_variable_names(upper, out);
+            collect_variable_names(body, out);
+        }
+        Node::Product(index, lower, upper, body) => {
+            out.push(*index);
+            collect_variable_names(lower, out);
+            collect_variable_names(upper, out);
+            collect_variable_names(body, out);
+        }
+        Node::IntNumber(_) | Node::FloatNumber(_) => {}
+    }
+}
+
+// Coefficients of an expanded univariate polynomial, lowest degree first
+fn to_polynomial(node: &Node, name: char) -> Option<Vec<Coeff>> {
+    match node {
+        Node::Variable(other) if *other == name => Some(vec![Coeff::zero(), Coeff::one()]),
+        Node::Variable(_) => None,
+        Node::IntNumber(_) | Node::FloatNumber(_) => Some(vec![as_coefficient(node)?]),
+        Node::Neg(inner) => {
+            let inner = to_polynomial(inner, name)?;
+
+            Some(inner.iter().map(|coefficient| coefficient.neg()).collect())
+        }
+        Node::Add(left, right) => {
+            let left = to_polynomial(left, name)?;
+            let right = to_polynomial(right, name)?;
+
+            Some(poly_add(&left, &right))
+        }
+        Node::Sub(left, right) => {
+            let left = to_polynomial(left, name)?;
+            let right = to_polynomial(right, name)?;
+
+            Some(poly_add(&left, &poly_scale(&right, Coeff::one().neg())))
+        }
+        Node::Mul(left, right) => {
+            let left = to_polynomial(left, name)?;
+            let right = to_polynomial(right, name)?;
+
+            Some(poly_mul(&left, &right))
+        }
+        Node::Pow(base, exponent) => {
+            let power = as_integer(exponent)?;
+
+            if !(0.0..=32.0).contains(&power) {
+                return None;
+            }
+
+            let base = to_polynomial(base, name)?;
+
+            Some(poly_pow(&base, power as usize))
+        }
+        _ => None,
+    }
+}
+
+fn poly_trim(poly: &[Coeff]) -> Vec<Coeff> {
+    let mut trimmed = poly.to_vec();
+
+    while trimmed
+        .last()
+        .is_some_and(|coefficient| coefficient.is_zero())
+    {
+        trimmed.pop();
+    }
+
+    trimmed
+}
+
+fn poly_add(left: &[Coeff], right: &[Coeff]) -> Vec<Coeff> {
+    let length = left.len().max(right.len());
+    let mut result = Vec::with_capacity(length);
+
+    for index in 0..length {
+        let a = left.get(index).copied().unwrap_or_else(Coeff::zero);
+        let b = right.get(index).copied().unwrap_or_else(Coeff::zero);
+
+        result.push(a.add(b));
+    }
+
+    poly_trim(&result)
+}
+
+fn poly_scale(poly: &[Coeff], factor: Coeff) -> Vec<Coeff> {
+    poly.iter()
+        .map(|coefficient| coefficient.mul(factor))
+        .collect()
+}
+
+fn poly_mul(left: &[Coeff], right: &[Coeff]) -> Vec<Coeff> {
+    if left.is_empty() || right.is_empty() {
+        return Vec::new();
+    }
+
+    let mut result = vec![Coeff::zero(); left.len() + right.len() - 1];
+
+    for (i, a) in left.iter().enumerate() {
+        for (j, b) in right.iter().enumerate() {
+            result[i + j] = result[i + j].add(a.mul(*b));
+        }
+    }
+
+    poly_trim(&result)
+}
+
+fn poly_pow(base: &[Coeff], power: usize) -> Vec<Coeff> {
+    let mut result = vec![Coeff::one()];
+
+    for _ in 0..power {
+        result = poly_mul(&result, base);
+    }
+
+    result
+}
+
+fn poly_divmod(numerator: &[Coeff], denominator: &[Coeff]) -> Option<(Vec<Coeff>, Vec<Coeff>)> {
+    let numerator = poly_trim(numerator);
+    let denominator = poly_trim(denominator);
+
+    if denominator.is_empty() {
+        return None;
+    }
+
+    if numerator.len() < denominator.len() {
+        return Some((Vec::new(), numerator));
+    }
+
+    let lead = denominator[denominator.len() - 1];
+    let mut quotient = vec![Coeff::zero(); numerator.len() - denominator.len() + 1];
+    let mut remainder = numerator;
+
+    while remainder.len() >= denominator.len() {
+        let shift = remainder.len() - denominator.len();
+        let factor = remainder[remainder.len() - 1].div(lead);
+
+        quotient[shift] = factor;
+
+        for (index, coefficient) in denominator.iter().enumerate() {
+            let term = factor.mul(*coefficient);
+            remainder[shift + index] = remainder[shift + index].add(term.neg());
+        }
+
+        remainder = poly_trim(&remainder);
+
+        if remainder.len() < denominator.len() {
+            break;
+        }
+    }
+
+    Some((poly_trim(&quotient), remainder))
+}
+
+fn poly_to_node(poly: &[Coeff], name: char) -> Node {
+    let mut grouped = Vec::new();
+
+    for degree in (0..poly.len()).rev() {
+        let coefficient = poly[degree];
+
+        if coefficient.is_zero() {
+            continue;
+        }
+
+        let base = match degree {
+            0 => number(1.0),
+            1 => variable(name),
+            _ => pow(variable(name), number(degree as f64)),
+        };
+
+        grouped.push((to_source(&base), coefficient, base));
+    }
+
+    build_sum(grouped)
 }
 
 // Attaches a numeric coefficient to a node, keeping readable forms
@@ -1536,6 +1793,10 @@ fn integral(
                             integrate_linear_power(base, power, name)?,
                         ))
                     }
+                } else if let Some(reciprocal) = integrate_quadratic_reciprocal(denominator, name) {
+                    Some(mul((**numerator).clone(), reciprocal))
+                } else if let Some(reciprocal) = integrate_exp_reciprocal(denominator, name) {
+                    Some(mul((**numerator).clone(), reciprocal))
                 } else {
                     // a / (k*x + b) -> (a / k) * ln|k*x + b|
                     let (slope, _) = linear_coefficients(denominator, name)?;
@@ -1546,7 +1807,21 @@ fn integral(
                     ))
                 }
             } else {
-                None
+                // f'(x) / f(x) -> ln|f(x)|
+                let derivative = diff(denominator, name, functions, 0);
+
+                match derivative {
+                    Some(derivative) => {
+                        let ratio = simplify(&div((**numerator).clone(), derivative));
+
+                        if has_var(&ratio, name) {
+                            None
+                        } else {
+                            Some(mul(ratio, ln(abs((**denominator).clone()))))
+                        }
+                    }
+                    None => None,
+                }
             }
         }
 
@@ -1623,6 +1898,130 @@ fn integrate_linear_power(base: &Node, power: f64, name: char) -> Option<Node> {
     }
 }
 
+// 1 / (c + b*x^2) -> (1 / sqrt(b*c)) * atan(x * sqrt(b/c)), valid for b*c > 0
+fn integrate_quadratic_reciprocal(denominator: &Node, name: char) -> Option<Node> {
+    let polynomial = to_polynomial(denominator, name)?;
+
+    if polynomial.len() != 3 || !polynomial[1].is_zero() {
+        return None;
+    }
+
+    let constant = polynomial[0].to_f64();
+    let quadratic = polynomial[2].to_f64();
+
+    if constant <= 0.0 || quadratic <= 0.0 {
+        return None;
+    }
+
+    let scale = (quadratic / constant).sqrt();
+    let factor = 1.0 / (quadratic * constant).sqrt();
+
+    Some(mul(
+        number(factor),
+        builtin(Function::Atan, mul(variable(name), number(scale))),
+    ))
+}
+
+// 1 / (c0 + c1*e^(k*x)) -> (1 / (k*c0)) * ln|e^(k*x) / (c0 + c1*e^(k*x))|
+fn integrate_exp_reciprocal(denominator: &Node, name: char) -> Option<Node> {
+    let mut constant = 0.0f64;
+    let mut exponent = None;
+
+    for (negative, term) in additive_terms(denominator) {
+        let sign = if negative { -1.0 } else { 1.0 };
+
+        if let Some(power) = split_exp_term(&term, name) {
+            if exponent.is_some() {
+                return None;
+            }
+
+            exponent = Some(power);
+        } else if !has_var(&term, name) {
+            constant += sign * as_number(&term)?;
+        } else {
+            return None;
+        }
+    }
+
+    let exponent = exponent?;
+    let (slope, _) = linear_coefficients(&exponent, name)?;
+
+    if slope == 0.0 || constant == 0.0 {
+        return None;
+    }
+
+    let exponential = pow(number(std::f64::consts::E), exponent);
+    let divisor = slope * constant;
+
+    let coefficient = if divisor.fract() == 0.0 && divisor.abs() < 1e9 {
+        fraction(1, divisor as i128)
+    } else {
+        number(1.0 / divisor)
+    };
+
+    Some(mul(
+        coefficient,
+        ln(abs(div(exponential, denominator.clone()))),
+    ))
+}
+
+// Additive terms of a sum, each tagged with a sign flip for subtraction
+fn additive_terms(node: &Node) -> Vec<(bool, Node)> {
+    fn walk(node: &Node, negative: bool, out: &mut Vec<(bool, Node)>) {
+        match node {
+            Node::Add(left, right) => {
+                walk(left, negative, out);
+                walk(right, negative, out);
+            }
+            Node::Sub(left, right) => {
+                walk(left, negative, out);
+                walk(right, !negative, out);
+            }
+            Node::Neg(inner) => walk(inner, !negative, out),
+            other => out.push((negative, other.clone())),
+        }
+    }
+
+    let mut out = Vec::new();
+
+    walk(node, false, &mut out);
+
+    out
+}
+
+// The exponent of a factor shaped like e^u, alone or scaled by a constant
+fn split_exp_term(term: &Node, name: char) -> Option<Node> {
+    match term {
+        Node::Pow(base, exponent) if is_e_base(base) => Some((**exponent).clone()),
+        Node::Mul(left, right) => {
+            let exponential = if !has_var(left, name) {
+                right
+            } else if !has_var(right, name) {
+                left
+            } else {
+                return None;
+            };
+
+            let Node::Pow(base, exponent) = &**exponential else {
+                return None;
+            };
+
+            if !is_e_base(base) {
+                return None;
+            }
+
+            Some((**exponent).clone())
+        }
+        _ => None,
+    }
+}
+
+// True when the node is the base of the natural exponential
+fn is_e_base(node: &Node) -> bool {
+    matches!(node, Node::FloatNumber(value) if *value == std::f64::consts::E)
+        || matches!(node, Node::Variable('e'))
+}
+
 // Substitution rule: f'(x) * g(f(x)) integrates to G(f(x)) with G' = g
 fn integrate_substitution(
     node: &Node,
@@ -1638,6 +2037,7 @@ fn integrate_substitution(
             Node::Builtin(function, arguments) if arguments.len() == 1 => {
                 (*function, &arguments[0])
             }
+            Node::Pow(base, exponent) if is_e_base(base) => (Function::Exp, &**exponent),
             _ => continue,
         };
 
@@ -1664,10 +2064,36 @@ fn integrate_substitution(
         return Some(mul(ratio, antiderivative));
     }
 
+    // Second mode: rest = c * F' for one factor F, so u = F and rest = c F^2 / 2
+    for (index, factor) in factors.iter().enumerate() {
+        let Some(derivative) = diff(factor, name, functions, 0) else {
+            continue;
+        };
+
+        if !has_var(&derivative, name) {
+            continue;
+        }
+
+        let mut rest = factors.clone();
+
+        rest.remove(index);
+
+        let ratio = simplify(&div(build_product(rest), derivative));
+
+        if has_var(&ratio, name) {
+            continue;
+        }
+
+        return Some(mul(
+            div(ratio, number(2.0)),
+            pow((*factor).clone(), number(2.0)),
+        ));
+    }
+
     None
 }
 
-// Integration by parts, driven by a polynomial factor: u*v - integral(v*du)
+// Integration by parts, choosing u by the LIATE order: u*v - integral(v*du)
 fn integrate_by_parts(
     node: &Node,
     name: char,
@@ -1678,34 +2104,56 @@ fn integrate_by_parts(
         return None;
     };
 
-    for (poly, other) in [(left, right), (right, left)] {
-        if !has_var(other, name) || !is_polynomial(poly, name) {
+    let mut candidates = [(left, right), (right, left)];
+
+    candidates.sort_by_key(|(u, _)| liate_priority(u, name).unwrap_or(u8::MAX));
+
+    for (u, dv) in candidates {
+        if liate_priority(u, name).is_none() || !has_var(dv, name) {
             continue;
         }
 
-        let Some(antiderivative) = integral(other, name, functions, depth + 1) else {
+        let Some(antiderivative) = integral(dv, name, functions, depth + 1) else {
             continue;
         };
 
-        let Some(derivative) = diff(poly, name, functions, 0) else {
+        let Some(derivative) = diff(u, name, functions, 0) else {
             continue;
         };
 
         let derivative = simplify(&derivative);
-
         let remainder = integral(
-            &mul(derivative, antiderivative.clone()),
+            &simplify(&mul(derivative, antiderivative.clone())),
             name,
             functions,
             depth + 1,
         );
 
         if let Some(remainder) = remainder {
-            return Some(sub(mul((**poly).clone(), antiderivative), remainder));
+            return Some(simplify(&sub(
+                mul((**u).clone(), antiderivative),
+                remainder,
+            )));
         }
     }
 
     None
+}
+
+// LIATE priority: lower wins the choice of u (log, inverse, algebraic, trig, exp)
+fn liate_priority(node: &Node, name: char) -> Option<u8> {
+    match node {
+        Node::Builtin(function, _) => match function {
+            Function::Ln | Function::Log | Function::Log2 => Some(0),
+            Function::Asin | Function::Acos | Function::Atan => Some(1),
+            Function::Sin | Function::Cos | Function::Tan => Some(3),
+            Function::Exp => Some(4),
+            _ => None,
+        },
+        Node::Pow(base, exponent) if is_e_base(base) && has_var(exponent, name) => Some(4),
+        _ if is_polynomial(node, name) => Some(2),
+        _ => None,
+    }
 }
 
 // True for a polynomial in the variable (integer or real constant powers)
@@ -1726,7 +2174,7 @@ fn builtin_integral(function: Function, argument: Node) -> Option<Node> {
     let antiderivative = match function {
         Function::Sin => neg(builtin(Function::Cos, argument)),
         Function::Cos => builtin(Function::Sin, argument),
-        Function::Exp => builtin(Function::Exp, argument),
+        Function::Exp => pow(number(std::f64::consts::E), argument),
         Function::Sinh => builtin(Function::Cosh, argument),
         Function::Cosh => builtin(Function::Sinh, argument),
         Function::Tan => neg(ln(abs(builtin(Function::Cos, argument)))),

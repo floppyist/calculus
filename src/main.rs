@@ -91,6 +91,7 @@ fn run_plain() -> io::Result<()> {
                 | Command::ClearPlots
                 | Command::ClearEquations
                 | Command::ClearHistory
+                | Command::History
                 | Command::Show(_)
                 | Command::Hide(_)
                 | Command::Scales(_) => {}

@@ -347,10 +347,12 @@ impl Environment {
     // Simplified source text of an expression
     pub fn simplify(&self, expression: &str) -> Result<String, EvalError> {
         let ast = self.parse_and_validate(expression, &[])?;
+        let functions = self.function_map();
+        let expanded = algebra::expand_calls(&ast, &functions, 0);
 
-        let simplified = match algebra::fold_rational(&ast) {
+        let simplified = match algebra::fold_rational(&expanded) {
             Some(rational) => algebra::rational_to_node(rational),
-            None => algebra::simplify(&ast),
+            None => algebra::simplify(&expanded),
         };
 
         Ok(algebra::to_source(&simplified))

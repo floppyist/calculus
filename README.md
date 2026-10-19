@@ -127,6 +127,40 @@ Calculus automatically selects its execution mode based on whether standard inpu
 * **Interactive mode:** Starts the terminal application when both standard input and standard output are terminals.
 * **Line-oriented mode:** Processes input line by line when either stream is redirected or piped.
 
+### Line-Oriented (Pipe) Mode
+
+When either standard input or standard output is not a terminal, Calculus skips the fullscreen interface and reads input line by line. It prints a `> ` prompt, evaluates each line as an expression, an assignment, or a command, and exits at end of input (EOF).
+
+```bash
+echo "2 + 3 * 4" | ./target/release/calculus
+# > = 14
+# Variables: (none)
+# Functions: (none)
+
+printf 'a = 3\nb = a + 1\nb\n' | ./target/release/calculus
+
+```
+
+The environment is shared for the whole run, so definitions on earlier lines are visible to later lines of the same stream. After every evaluated expression the current variables and functions are written as two status lines:
+
+```text
+> a = 3
+Variables: a = 3
+Functions: (none)
+> b = a + 1
+Variables: a = 3, b = 4
+Functions: (none)
+```
+
+Behavior differences from interactive mode:
+
+* Commands that only affect the interactive display (`clear`, `clear info`, `clear plots`, `clear eq`, `clear history`, `history`, `show`, `hide`, `scales`) have no visible effect.
+* `clear vars`, `clear funcs`, and `clear all` still mutate the shared environment and confirm in the output.
+* `?` prints `Help is only available in interactive mode`.
+* `plot` renders a colorless Braille plot sized from the `COLUMNS` and `LINES` environment variables (default `80` by `24`).
+* Session state is neither loaded nor saved, so every run starts with an empty environment.
+* Blank lines are ignored, and `quit` / `exit` stop the stream before EOF.
+
 ### Evaluating Expressions
 
 Enter a mathematical expression to evaluate it:
@@ -317,7 +351,7 @@ $$\int_{0}^{3} x^2 \, dx = 9$$
 
 
 
-Symbolic integration covers polynomials (including negative powers such as `1/x^2`), linear inner functions, the elementary functions, the substitution rule $f'(x)\,g(f(x))$, and integration by parts driven by a polynomial factor (for instance `int (2x+1)*e^(2x)`). If no supported antiderivative is found, definite integration uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
+Symbolic integration covers polynomials (including negative powers such as `1/x^2`), linear inner functions, the elementary functions, and the substitution rule $f'(x)\,g(f(x))$ — including natural-exponential factors such as `int 2x*e^(x^2)` and the identity case $\int F\,F' = F^2/2$ (for instance `int sin(x)*cos(x)`). Reciprocal patterns are recognized as well: $f'/f \to \ln|f|$ (`int 2x/(x^2+1)`), $1/(a+bx^2) \to \frac{1}{\sqrt{ab}}\arctan(x\sqrt{b/a})$ (`int 1/(x^2+1)`), and the exponential fraction $1/(c_0+c_1e^{kx})$ (`int 1/(e^(3x)+1)`). Integration by parts chooses $u$ by the LIATE order, so `int x*ln(x)` integrates the logarithm first (as opposed to a purely polynomial driver, `int (2x+1)*e^(2x)`). If no supported antiderivative is found, definite integration uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
 
 ### Solving Equations
 
@@ -374,7 +408,7 @@ In interactive mode, individual panes can be toggled:
 
 ```
 
-Supported pane names are `plot`, `vars`, `funcs`, `info`, and `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`).
+Supported pane names are `plot`, `vars`, `funcs`, `eq`, `info`, and `all`. The `info` target toggles the status and echo lines; hiding it folds each result's input into its result line (for example `2+3*4 = 14`).
 
 Definitions are content rather than status, so they stay in the output while `info` is hidden. The output then reads like a notebook that records every assignment and function definition next to the values it produced:
 
@@ -398,14 +432,16 @@ The following commands are recognized by the command parser:
 | `quit` or `exit` | Exit the application |
 | `plot <expression>` | Plot one or more expressions |
 | `scales`, `scales on`, `scales off` | Control axis labels |
-| `show <pane>` / `hide <pane>` | Toggle panes: `plot`, `vars`, `funcs`, `info`, `all` |
-| `clear` | Clear the output area in interactive mode |
+| `show <pane>` / `hide <pane>` | Toggle panes: `plot`, `vars`, `funcs`, `eq`, `info`, `all` |
+| `clear` | Clear the output area in interactive mode (kept restorable with `history`) |
 | `clear info` | Remove info and echo lines from the output |
 | `clear vars` | Remove all variable definitions |
 | `clear funcs` | Remove all user-defined functions |
+| `clear eq` | Remove all solved equations |
 | `clear plots` | Remove plotted curves in interactive mode |
-| `clear all` | Clear variables, functions, plots and the state file |
-| `clear history` | Clear input history in interactive mode |
+| `history` | Restore the output most recently removed by `clear` |
+| `clear all` | Clear variables, functions, equations, plots, history and the state file |
+| `clear history` | Wipe the output and forget its restorable copy and the input history |
 | `simplify` or `simp <expression>` | Simplify an expression |
 | `diff`, `derive`, `derivative <expression>` | Differentiate an expression |
 | `int`, `integral`, `integrate <expression>` | Compute an indefinite integral |
@@ -687,6 +723,15 @@ calculus/
 | `ui/term.rs` | Manages terminal setup and restoration across platforms. |
 | `main.rs` | Selects the execution mode and initializes the application. |
 
+### Execution Modes
+
+`main.rs` decides at startup whether to run the interactive terminal interface or the line-oriented fallback by checking `stdin` and `stdout`:
+
+* **Interactive:** `App` owns the terminal, the pane layout, the output notebook, and the `Environment`. A key reader drives a vi-style input editor, and the frame buffer is redrawn on every state change. On exit the session state is written to disk.
+* **Line-oriented:** A plain loop owns the `Environment` and prints results directly. No raw mode, alternate screen, or persistence is used, so it is safe to run inside pipes and scripts.
+
+Both paths share the same pipeline and command parser; only the way results are presented differs.
+
 ### Expression Processing
 
 A typical mathematical expression follows this processing pipeline:
@@ -698,6 +743,10 @@ A typical mathematical expression follows this processing pipeline:
 5. **Formatting:** Results are converted into readable expressions or numerical output.
 
 The runtime environment stores variable definitions, user-defined functions, and evaluated variable values. Variables are recalculated according to their dependencies, while user-defined functions are evaluated with local parameter bindings.
+
+When an expression is not purely numeric, the environment dispatches it to the symbolic layer in `core/algebra.rs`: `simplify`, `differentiate`, `integrate`, and `solve` each rewrite the AST and render it back with the compact source printer. Assignments are handled separately: the target is detected first, the right-hand side is evaluated or stored symbolically, and dependent definitions are recomputed in dependency order. The two execution modes above only differ in presentation, not in this core behavior.
+
+All tests live in the central `src/tests/` module tree (one file per module), declared from `main.rs`; `cargo test` exercises the tokenizer, parser, environment, algebra, plotting, UI formatting, command parsing, and persistence together.
 
 ---
 

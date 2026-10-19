@@ -79,10 +79,12 @@ const HELP_LINES: &[&str] = &[
     "  clear info                remove info and echo lines",
     "  clear vars                remove all variables",
     "  clear funcs               remove all functions",
+    "  clear eq                  remove all solved equations",
     "  clear plots               remove all curves",
     "  clear all                 wipe the session and the state file",
-    "  clear history             forget the input history",
-    "  show / hide <pane>        panes: plot, vars, funcs",
+    "  clear history             wipe the output and forget it",
+    "  history                   restore the output cleared last",
+    "  show / hide <pane>        panes: plot, vars, funcs, eq",
     "  show / hide info          toggle the status and info lines",
     "  show / hide all           apply to every pane above",
     "",
@@ -100,7 +102,7 @@ const HELP_LINES: &[&str] = &[
     "",
     "Keys",
     "  Enter                     evaluate",
-    "  Tab                       focus input / variables / functions / output",
+    "  Tab                       focus input / variables / functions / equations / output",
     "  Ctrl-C                    clear the input",
     "  Ctrl-D                    quit",
     "  p                         paste from the clipboard (normal mode)",
@@ -195,7 +197,6 @@ pub struct App {
     show_funcs: bool,
     show_eq: bool,
     // Output stashed by `clear`, brought back by the `history` command
-    #[allow(dead_code)]
     cleared: Vec<OutputLine>,
     should_quit: bool,
 }
@@ -225,9 +226,9 @@ impl App {
             input_visual: None,
             hide_info: false,
             show_plot: true,
-            show_vars: true,
-            show_funcs: true,
-            show_eq: true,
+            show_vars: false,
+            show_funcs: false,
+            show_eq: false,
             cleared: Vec::new(),
             should_quit: false,
         };
@@ -259,9 +260,18 @@ impl App {
             let _ = self.environment.execute(definition);
         }
 
+        for equation in &state.equations {
+            self.restore_equation(equation);
+        }
+
         if !state.plots.is_empty() {
             self.command_plot(&state.plots.join(", "));
         }
+
+        // Restored content reveals the panes it populates
+        self.show_vars = !self.environment.values().is_empty();
+        self.show_funcs = !self.environment.functions().is_empty();
+        self.show_eq = !self.environment.equations().is_empty();
     }
 
     // Writes the current session state if a path is configured
@@ -281,10 +291,28 @@ impl App {
                 .iter()
                 .map(|curve| curve.source.clone())
                 .collect(),
+            equations: self
+                .environment
+                .equations()
+                .iter()
+                .map(|entry| format!("{}, {}", entry.equation, entry.variable))
+                .collect(),
             history: self.editor.history().to_vec(),
         };
 
         let _ = persist::save(path, &state);
+    }
+
+    // Re-solves a persisted "equation, variable" pair without printing it
+    fn restore_equation(&mut self, stored: &str) {
+        let Some((equation, variable)) = stored.rsplit_once(", ") else {
+            return;
+        };
+        let Some(variable) = single_variable(variable.trim()) else {
+            return;
+        };
+
+        let _ = self.environment.solve(equation.trim(), variable);
     }
 
     pub fn run(&mut self, terminal: &mut Terminal) {
@@ -2534,6 +2562,7 @@ impl App {
                 self.command_clear_history();
                 self.persist();
             }
+            Command::History => self.command_history(),
             Command::Simplify(expression) => self.command_simplify(&expression),
             Command::Differentiate(expression) => {
                 self.command_differentiate(&expression);
@@ -2695,6 +2724,7 @@ impl App {
         self.environment.clear_variables();
         self.environment.clear_functions();
         self.curves.clear();
+        self.cleared.clear();
         self.scales_visible = false;
         self.var_selection = 0;
         self.side_selection = 0;
@@ -2721,7 +2751,23 @@ impl App {
     }
 
     fn command_clear_output(&mut self) {
-        self.output.clear();
+        self.cleared = std::mem::take(&mut self.output);
+
+        // The "> clear" echo is not worth restoring
+        if matches!(self.cleared.last(), Some(line) if line.kind == Kind::Echo) {
+            self.cleared.pop();
+        }
+    }
+
+    fn command_history(&mut self) {
+        if self.cleared.is_empty() {
+            self.push_info(hint_style(), "nothing to restore".to_string());
+            return;
+        }
+
+        self.output = std::mem::take(&mut self.cleared);
+        self.scroll = 0;
+        self.snap_output_to_visible();
     }
 
     fn command_clear_info(&mut self) {
@@ -2772,6 +2818,8 @@ impl App {
 
     fn command_clear_history(&mut self) {
         self.editor.set_history(Vec::new());
+        self.output.clear();
+        self.cleared.clear();
         self.push_info(hint_style(), "history cleared".to_string());
     }
 

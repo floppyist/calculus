@@ -78,6 +78,14 @@ fn test_parse_clear_commands() {
 }
 
 #[test]
+fn test_parse_history_restore() {
+    assert!(matches!(
+        command::parse_command("history"),
+        Some(Command::History)
+    ));
+}
+
+#[test]
 fn test_parse_show_hide() {
     assert!(matches!(
         command::parse_command("show plot"),

@@ -15,6 +15,7 @@ pub enum Command {
     ClearEquations,
     ClearAll,
     ClearHistory,
+    History,
     Simplify(String),
     Differentiate(String),
     Print(String),
@@ -103,6 +104,10 @@ pub fn parse_command(input: &str) -> Option<Command> {
 
     if trimmed == "clear history" {
         return Some(Command::ClearHistory);
+    }
+
+    if trimmed == "history" {
+        return Some(Command::History);
     }
 
     if let Some(rest) = keyword_argument(trimmed, &["show"]) {

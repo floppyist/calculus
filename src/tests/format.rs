@@ -1,4 +1,12 @@
-use crate::ui::format::{format_scale, now_hms};
+use crate::ui::format::{format_number, format_scale, now_hms};
+
+#[test]
+fn test_format_number_marks_non_finite_as_undefined() {
+    assert_eq!(format_number(f64::INFINITY), "undefined");
+    assert_eq!(format_number(f64::NEG_INFINITY), "undefined");
+    assert_eq!(format_number(f64::NAN), "undefined");
+    assert_eq!(format_number(30.0 / 0.0), "undefined");
+}
 
 #[test]
 fn test_format_scale_rounds() {

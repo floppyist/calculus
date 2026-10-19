@@ -6,6 +6,7 @@ pub struct State {
     pub scales: bool,
     pub definitions: Vec<String>,
     pub plots: Vec<String>,
+    pub equations: Vec<String>,
     pub history: Vec<String>,
 }
 
@@ -34,6 +35,12 @@ pub fn save(path: &Path, state: &State) -> std::io::Result<()> {
         contents.push('\n');
     }
 
+    for equation in &state.equations {
+        contents.push_str("eq ");
+        contents.push_str(equation);
+        contents.push('\n');
+    }
+
     for entry in &state.history {
         contents.push_str("history ");
         contents.push_str(entry);
@@ -50,6 +57,7 @@ pub fn load(path: &Path) -> Option<State> {
         scales: false,
         definitions: Vec::new(),
         plots: Vec::new(),
+        equations: Vec::new(),
         history: Vec::new(),
     };
 
@@ -75,6 +83,16 @@ pub fn load(path: &Path) -> Option<State> {
 
             if !rest.is_empty() {
                 state.plots.push(rest.to_string());
+            }
+
+            continue;
+        }
+
+        if let Some(rest) = line.strip_prefix("eq ") {
+            let rest = rest.trim();
+
+            if !rest.is_empty() {
+                state.equations.push(rest.to_string());
             }
 
             continue;

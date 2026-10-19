@@ -1,14 +1,8 @@
 use crate::core::environment::Outcome;
 
 pub fn format_number(value: f64) -> String {
-    if value.is_nan() {
-        "NaN".to_string()
-    } else if value.is_infinite() {
-        if value.is_sign_negative() {
-            "-inf".to_string()
-        } else {
-            "inf".to_string()
-        }
+    if !value.is_finite() {
+        "undefined".to_string()
     } else if value == value.trunc() && value.abs() < 1e15 {
         format!("{}", value as i64)
     } else {

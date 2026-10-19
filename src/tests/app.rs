@@ -1,5 +1,6 @@
 use crate::ui::app::{App, selected_text, selection_span};
 use crate::ui::input::Key;
+use crate::ui::persist::State;
 
 fn run(app: &mut App, keys: &[Key]) {
     for key in keys {
@@ -381,8 +382,60 @@ fn test_hide_info_hides_echo_and_errors() {
 }
 
 #[test]
+fn test_empty_panes_stay_hidden_until_content() {
+    let mut app = App::new();
+
+    let frame = app.render(80, 24);
+
+    assert!(!frame.contains("Variables"), "empty pane shown: {frame}");
+    assert!(!frame.contains("Equations"), "empty pane shown: {frame}");
+
+    type_line(&mut app, "x=2");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("Variables"), "pane not revealed: {frame}");
+}
+
+#[test]
+fn test_show_reveals_empty_pane() {
+    let mut app = App::new();
+
+    type_line(&mut app, "show vars");
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("Variables"), "pane not shown: {frame}");
+}
+
+#[test]
+fn test_restore_reveals_equations_pane() {
+    let mut app = App::new();
+    let state = State {
+        scales: false,
+        definitions: vec!["f(x) = x^2".to_string()],
+        plots: Vec::new(),
+        equations: vec!["x^2=4, x".to_string()],
+        history: Vec::new(),
+    };
+
+    app.restore(&state);
+
+    let frame = app.render(80, 24);
+
+    assert!(frame.contains("Equations"), "pane not revealed: {frame}");
+    assert!(frame.contains("x^2=4"), "equation missing: {frame}");
+    assert!(
+        frame.contains("(x = 2, x = -2)"),
+        "solutions missing: {frame}"
+    );
+}
+
+#[test]
 fn test_sidebar_lists_builtin_constants() {
     let mut app = App::new();
+
+    type_line(&mut app, "show vars");
 
     let frame = app.render(80, 24);
 
@@ -405,7 +458,8 @@ fn test_setting_e_marks_it_custom() {
 fn test_plot_constant_from_sidebar() {
     let mut app = App::new();
 
-    // The first row of a fresh session is the constant e
+    // Reveal the Variables pane; its first row is the constant e
+    type_line(&mut app, "show vars");
     app.handle_key(Key::Tab);
     app.handle_key(Key::Char(' '));
 
@@ -500,6 +554,63 @@ fn test_clear_info_keeps_definitions() {
         !texts.iter().any(|line| line.starts_with("> ")),
         "{:?}",
         texts
+    );
+}
+
+#[test]
+fn test_clear_then_history_restores_output() {
+    let mut app = App::new();
+
+    type_line(&mut app, "2+3");
+    let before = app.output_texts();
+
+    type_line(&mut app, "clear");
+    assert!(app.output_texts().is_empty(), "clear must empty the output");
+
+    type_line(&mut app, "history");
+    assert_eq!(
+        app.output_texts(),
+        before,
+        "history must restore the output"
+    );
+}
+
+#[test]
+fn test_clear_history_discards_restorable_output() {
+    let mut app = App::new();
+
+    type_line(&mut app, "2+3");
+    type_line(&mut app, "clear");
+    type_line(&mut app, "clear history");
+    type_line(&mut app, "history");
+
+    let texts = app.output_texts();
+
+    assert!(
+        !texts.iter().any(|line| line.contains("2+3")),
+        "cleared output must not come back: {texts:?}"
+    );
+}
+
+#[test]
+fn test_clear_history_wipes_the_screen_before_clear() {
+    let mut app = App::new();
+
+    type_line(&mut app, "2+3");
+    type_line(&mut app, "clear history");
+
+    assert!(
+        !app.output_texts().iter().any(|line| line.contains("2+3")),
+        "clear history must wipe the visible output"
+    );
+
+    type_line(&mut app, "history");
+
+    let texts = app.output_texts();
+
+    assert!(
+        !texts.iter().any(|line| line.contains("2+3")),
+        "wiped output must not be restorable: {texts:?}"
     );
 }
 
