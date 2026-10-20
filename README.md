@@ -8,6 +8,13 @@ The application provides an interactive terminal interface as well as a line-ori
 
 ---
 
+> [!CAUTION]
+> **Work in Progress (WIP)**
+>
+> This project is currently in a very early development stage. Features might change drastically, break unexpectedly, or remain incomplete. Use with caution!
+
+---
+
 ![Plotting](screenshots/screenshot_001.png)
 
 ![Simple Calc](screenshots/screenshot_002.png)
