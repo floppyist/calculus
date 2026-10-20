@@ -512,11 +512,6 @@ fn test_solved_equation_marks_the_intersection() {
         frame.contains("(2,2)"),
         "intersection label missing: {frame}"
     );
-
-    assert!(
-        frame.contains("(2,2)"),
-        "intersection label missing: {frame}"
-    );
 }
 
 #[test]
@@ -532,6 +527,42 @@ fn test_intersection_requires_two_plotted_sides() {
     assert!(
         !frame.contains("(3,3)"),
         "marker drawn without two curves: {frame}"
+    );
+}
+
+#[test]
+fn test_input_colors_a_typed_command_keyword() {
+    let mut app = App::new();
+
+    for ch in "plot x".chars() {
+        app.handle_key(Key::Char(ch));
+    }
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        frame.contains("\u{1b}[0;1;95mplot"),
+        "command keyword not colored: {frame:?}"
+    );
+    assert!(
+        !frame.contains("\u{1b}[0;1;95mx"),
+        "the argument must stay plain: {frame:?}"
+    );
+}
+
+#[test]
+fn test_input_leaves_partial_keyword_plain() {
+    let mut app = App::new();
+
+    for ch in "pl".chars() {
+        app.handle_key(Key::Char(ch));
+    }
+
+    let frame = app.render(80, 24);
+
+    assert!(
+        !frame.contains("\u{1b}[0;1;95m"),
+        "a half-typed keyword must stay plain: {frame:?}"
     );
 }
 

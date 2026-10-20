@@ -323,3 +323,24 @@ fn test_parse_arithmetic_is_not_command() {
     assert!(command::parse_command("2*x").is_none());
     assert!(command::parse_command("f(x)=3").is_none());
 }
+
+#[test]
+fn test_command_prefix_matches_complete_keywords() {
+    assert_eq!(command::command_prefix("plot"), Some(4));
+    assert_eq!(command::command_prefix("plot x"), Some(4));
+    assert_eq!(command::command_prefix("eq f(x)=g(x)"), Some(2));
+    assert_eq!(command::command_prefix("?"), Some(1));
+    assert_eq!(command::command_prefix("solve x^2=4, x"), Some(5));
+}
+
+#[test]
+fn test_command_prefix_ignores_partial_words() {
+    // A half-typed keyword must stay uncolored
+    assert_eq!(command::command_prefix("pl"), None);
+    assert_eq!(command::command_prefix("plots"), None);
+    assert_eq!(command::command_prefix("x+1"), None);
+    assert_eq!(command::command_prefix("equationx"), None);
+    // An expression that merely starts with a keyword letter is not a command
+    assert_eq!(command::command_prefix("integrate"), Some(9));
+    assert_eq!(command::command_prefix("integr"), None);
+}

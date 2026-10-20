@@ -48,6 +48,51 @@ pub enum PaneArg {
     All,
 }
 
+// Every leading word that parse_command treats as a command
+const COMMAND_WORDS: &[&str] = &[
+    "?",
+    "quit",
+    "exit",
+    "plot",
+    "scales",
+    "clear",
+    "history",
+    "show",
+    "hide",
+    "simplify",
+    "simp",
+    "diff",
+    "derive",
+    "derivative",
+    "print",
+    "integrate",
+    "integral",
+    "int",
+    "eq",
+    "equation",
+    "solve",
+];
+
+// Length in characters of a leading command keyword typed so far, else None;
+// only a complete keyword at a word boundary counts, so 'pl' stays plain
+pub fn command_prefix(input: &str) -> Option<usize> {
+    let trimmed = input.trim_start();
+
+    for word in COMMAND_WORDS {
+        if trimmed == *word {
+            return Some(word.chars().count());
+        }
+
+        if let Some(rest) = trimmed.strip_prefix(word)
+            && rest.starts_with(' ')
+        {
+            return Some(word.chars().count());
+        }
+    }
+
+    None
+}
+
 // Recognizes a command line; None means the input is an expression or assignment
 pub fn parse_command(input: &str) -> Option<Command> {
     let trimmed = input.trim();

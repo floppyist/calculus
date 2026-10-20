@@ -573,9 +573,19 @@ impl App {
         };
 
         if selection.is_none() {
-            let visible: String = chars.iter().skip(offset).take(avail).collect();
+            let text: String = chars.iter().collect();
+            let keyword = command::command_prefix(&text);
+            let leading = chars.iter().take_while(|ch| ch.is_whitespace()).count();
+            let keyword_end = keyword.map(|length| leading + length);
 
-            canvas.print(text_x, line_y, &visible, value_style());
+            for (index, ch) in chars.iter().enumerate().skip(offset).take(avail) {
+                let style = match keyword_end {
+                    Some(end) if index < end => command_style(),
+                    _ => value_style(),
+                };
+
+                canvas.put(text_x + (index - offset) as isize, line_y, *ch, style);
+            }
         } else {
             let visible = chars.iter().enumerate().skip(offset).take(avail);
 
@@ -3477,6 +3487,10 @@ fn hint_style() -> Style {
 
 fn prompt_style() -> Style {
     Style::fg(Color::BrightCyan).bold()
+}
+
+fn command_style() -> Style {
+    Style::fg(Color::BrightMagenta).bold()
 }
 
 fn value_style() -> Style {
