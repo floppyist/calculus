@@ -16,6 +16,30 @@ fn type_line(app: &mut App, text: &str) {
     app.handle_key(Key::Enter);
 }
 
+// Drops ANSI colour escapes so assertions can match visible text
+fn plain(frame: &str) -> String {
+    let mut out = String::new();
+    let mut chars = frame.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+
+                for next in chars.by_ref() {
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+
+    out
+}
+
 #[test]
 fn test_selection_span_single_line() {
     assert_eq!(selection_span(0, 5, (0, 1), (0, 3)), Some((1, 3)));
@@ -361,22 +385,25 @@ fn test_clear_info_keeps_only_results() {
 }
 
 #[test]
-fn test_hide_info_hides_echo_and_errors() {
+fn test_hide_info_hides_echo_but_keeps_error_status() {
     let mut app = App::new();
 
     type_line(&mut app, "1+1");
-    type_line(&mut app, "zzz");
     type_line(&mut app, "hide info");
+    type_line(&mut app, "zzz");
 
-    let frame = app.render(80, 24);
+    let frame = plain(&app.render(80, 24));
 
     assert!(frame.contains("= 2"), "result should stay visible");
     assert!(!frame.contains("> 1+1"), "echo should be hidden");
-    assert!(!frame.contains("[ERROR]"), "error should be hidden");
+    assert!(
+        frame.contains("[ERROR]"),
+        "error status should stay visible"
+    );
 
     type_line(&mut app, "show info");
 
-    let frame = app.render(80, 24);
+    let frame = plain(&app.render(80, 24));
 
     assert!(frame.contains("> 1+1"), "echo should return");
 }
@@ -453,7 +480,22 @@ fn test_restore_reveals_equations_pane() {
     assert!(frame.contains("x^2=4"), "equation missing: {frame}");
     assert!(
         frame.contains("(x = 2, x = -2)"),
-        "solutions missing: {frame}"
+        "solutions preview missing: {frame}"
+    );
+}
+
+#[test]
+fn test_clear_all_empties_the_equations_pane() {
+    let mut app = App::new();
+
+    type_line(&mut app, "eq x^2=4");
+    type_line(&mut app, "clear all");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        !frame.contains("(x = 2, x = -2)"),
+        "clear all must remove solved equations: {frame}"
     );
 }
 

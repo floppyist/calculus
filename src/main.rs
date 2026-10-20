@@ -167,6 +167,9 @@ fn run_plain() -> io::Result<()> {
                         Ok(IntegralOutcome::Value(value)) => {
                             writeln!(stdout, "= {}", format_number(value))?;
                         }
+                        Ok(IntegralOutcome::Exact(value)) => {
+                            writeln!(stdout, "= {}", value)?;
+                        }
                         Err(error) => writeln!(stdout, "{}", error)?,
                     }
                 }

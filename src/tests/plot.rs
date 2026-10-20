@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use crate::core::node::Node;
-use crate::core::plot::{BRAILLE_BASE, nice_ticks, render, sample_curve, y_range};
+use crate::core::plot::{BRAILLE_BASE, curve_pixels, nice_ticks, render, sample_curve, y_range};
 
 fn x_samples(columns: usize) -> Vec<Option<f64>> {
     // The identity y = x suffices for the tests
@@ -55,6 +55,34 @@ fn test_render_drops_out_of_range_points() {
     let with_spike = render(&[("f", &spiked)], 4, 3);
 
     assert_eq!(&clean[1..], &with_spike[1..]);
+}
+
+#[test]
+fn test_curve_pixels_connects_visible_samples() {
+    // Two columns far apart vertically must be joined by intermediate pixels
+    let samples = vec![Some(0.0), Some(1.0)];
+    let pixels = curve_pixels(&samples, -1.0, 1.0, 9);
+
+    assert!(pixels.len() > 2);
+    assert_eq!(pixels.first(), Some(&(0, 4)));
+    assert_eq!(pixels.last(), Some(&(1, 0)));
+}
+
+#[test]
+fn test_curve_pixels_skips_asymptote_jump() {
+    // A gap (None) breaks the line so no vertical stroke is drawn across it
+    let samples = vec![Some(-2.0), None, Some(2.0)];
+    let pixels = curve_pixels(&samples, -1.0, 1.0, 9);
+
+    assert!(pixels.is_empty());
+}
+
+#[test]
+fn test_curve_pixels_single_point() {
+    let samples = vec![Some(0.0)];
+    let pixels = curve_pixels(&samples, -1.0, 1.0, 9);
+
+    assert_eq!(pixels, vec![(0, 4)]);
 }
 
 #[test]

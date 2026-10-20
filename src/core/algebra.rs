@@ -907,6 +907,13 @@ fn simplify_sum(left: &Node, right: &Node, subtract: bool) -> Node {
 
     grouped.retain(|(_, coefficient, _)| !coefficient.is_zero());
 
+    // Pull out a factor shared by every term, e.g. 1/2*x*e^u - 1/4*e^u -> 1/4*e^u*(2x - 1)
+    if grouped.len() > 1
+        && let Some(factored) = factor_common(&grouped)
+    {
+        return factored;
+    }
+
     // Like a classical polynomial: constants last, descending degree in x
     grouped.sort_by(|a, b| {
         let a_constant = is_constant_term(&a.2);
@@ -1007,6 +1014,132 @@ fn make_term(coefficient: Coeff, base: Node) -> Node {
     build_product(factors)
 }
 
+// Extracts the largest factor shared by every term; None when nothing is common
+fn factor_common(grouped: &[(String, Coeff, Node)]) -> Option<Node> {
+    let mut shared: Option<Vec<(String, Node, f64)>> = None;
+
+    for (_, _, base) in grouped {
+        let (_, bases) = decompose_product(vec![base.clone()]);
+
+        shared = Some(match shared {
+            None => bases,
+            Some(current) => current
+                .into_iter()
+                .filter_map(|(key, node, exponent)| {
+                    bases
+                        .iter()
+                        .find(|(other, _, _)| *other == key)
+                        .map(|(_, _, other_exponent)| (key, node, exponent.min(*other_exponent)))
+                })
+                .collect(),
+        });
+    }
+
+    let shared = shared.unwrap_or_default();
+
+    // Only symbolic factors are pulled out; a bare numeric gcd would fight the
+    // polynomial ordering (2x + 2 should stay, not become 2(x + 1))
+    if shared.is_empty() {
+        return None;
+    }
+
+    let coefficient = common_coefficient(grouped);
+
+    let common = make_term(coefficient, bases_to_node(shared.clone()));
+    let mut reduced: Vec<(String, Coeff, Node)> = Vec::new();
+
+    for (key, term_coefficient, base) in grouped {
+        let (_, bases) = decompose_product(vec![base.clone()]);
+        let mut rest: Vec<Node> = Vec::new();
+
+        for (base_key, node, exponent) in bases {
+            let leftover = shared
+                .iter()
+                .find(|(shared_key, _, _)| *shared_key == base_key)
+                .map(|(_, _, shared_exponent)| exponent - shared_exponent)
+                .unwrap_or(exponent);
+
+            if leftover != 0.0 {
+                rest.push(simplify_power(node, number(leftover)));
+            }
+        }
+
+        let rest_node = build_product(rest);
+        let remainder = term_coefficient.div(coefficient);
+
+        reduced.push((key.clone(), remainder, rest_node));
+    }
+
+    reduced.sort_by(|a, b| {
+        is_constant_term(&a.2)
+            .cmp(&is_constant_term(&b.2))
+            .then_with(|| {
+                degree_in(&b.2, 'x')
+                    .partial_cmp(&degree_in(&a.2, 'x'))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+            .then_with(|| a.0.cmp(&b.0))
+    });
+
+    let inner = build_sum(reduced);
+
+    Some(Node::Mul(Box::new(common), Box::new(inner)))
+}
+
+// Greatest rational factor dividing every term's coefficient (falls back to 1)
+fn common_coefficient(grouped: &[(String, Coeff, Node)]) -> Coeff {
+    let mut factor: Option<Coeff> = None;
+
+    for (_, coefficient, _) in grouped {
+        let Coeff::Rational(rational) = coefficient else {
+            return Coeff::one();
+        };
+
+        factor = Some(match factor {
+            None => Coeff::Rational(*rational),
+            Some(Coeff::Rational(current)) => Coeff::Rational(rational_gcd(current, *rational)),
+            Some(_) => Coeff::one(),
+        });
+    }
+
+    match factor {
+        Some(value) => value,
+        None => Coeff::one(),
+    }
+}
+
+// Rational gcd: gcd of numerators over lcm of denominators
+fn rational_gcd(left: Rational, right: Rational) -> Rational {
+    let numerator = integer_gcd(left.numerator(), right.numerator());
+    let denominator = integer_lcm(left.denominator(), right.denominator());
+
+    Rational::new(numerator, denominator).unwrap_or_else(|| Rational::from_integer(1))
+}
+
+fn integer_gcd(left: i128, right: i128) -> i128 {
+    let mut a = left.unsigned_abs() as i128;
+    let mut b = right.unsigned_abs() as i128;
+
+    while b != 0 {
+        let remainder = a % b;
+
+        a = b;
+        b = remainder;
+    }
+
+    if a == 0 { 1 } else { a }
+}
+
+fn integer_lcm(left: i128, right: i128) -> i128 {
+    if left == 0 || right == 0 {
+        return 1;
+    }
+
+    (left / integer_gcd(left, right))
+        .saturating_mul(right)
+        .abs()
+}
+
 fn simplify_product(nodes: &[Node]) -> Node {
     let mut numerator = Vec::new();
     let mut denominator = Vec::new();
@@ -1073,6 +1206,9 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
         }
     }
 
+    let (top_coefficient, bottom_coefficient) =
+        reduce_coefficients(top_coefficient, bottom_coefficient);
+
     if bottom_bases.is_empty() {
         if bottom_coefficient.is_zero() {
             return number(top_coefficient.to_f64() / 0.0);
@@ -1091,9 +1227,6 @@ fn simplify_ratio(numerator: Vec<Node>, denominator: Vec<Node>) -> Node {
 
         return with_coefficient(top_coefficient.div(bottom_coefficient), base);
     }
-
-    let (top_coefficient, bottom_coefficient) =
-        reduce_coefficients(top_coefficient, bottom_coefficient);
 
     let top = with_coefficient(top_coefficient, bases_to_node(remaining));
     let bottom = with_coefficient(bottom_coefficient, bases_to_node(bottom_bases));

@@ -26,9 +26,15 @@ pub fn save(path: &Path, state: &State) -> std::io::Result<()> {
     let mut contents = String::new();
 
     contents.push_str(&format!("scales={}\n", if state.scales { 1 } else { 0 }));
-    contents.push_str(&format!("timestamps={}\n", if state.timestamps { 1 } else { 0 }));
+    contents.push_str(&format!(
+        "timestamps={}\n",
+        if state.timestamps { 1 } else { 0 }
+    ));
     contents.push_str(&format!("colors={}\n", if state.colors { 1 } else { 0 }));
-    contents.push_str(&format!("hide_info={}\n", if state.hide_info { 1 } else { 0 }));
+    contents.push_str(&format!(
+        "hide_info={}\n",
+        if state.hide_info { 1 } else { 0 }
+    ));
 
     for definition in &state.definitions {
         contents.push_str(definition);

@@ -764,7 +764,7 @@ impl App {
             return;
         };
 
-        if self.hide_info || rect.height < 2 || rect.width < 4 {
+        if rect.height < 2 || rect.width < 4 {
             return;
         }
 
@@ -886,23 +886,14 @@ impl App {
 
         // Curves first so the axes can skip cells a curve already occupies
         for (curve, sample) in self.curves.iter().zip(samples.iter()) {
-            for (i, value) in sample.iter().enumerate() {
-                if let Some(y) = value {
-                    // Drop out-of-range points instead of clamping them to the edge
-                    if !y.is_finite() || *y < y_min || *y > y_max {
-                        continue;
-                    }
-
-                    let row = plot::row_for(*y, y_min, y_max, pixel_height);
-
-                    canvas.put_braille(
-                        data.x + i / 2,
-                        data.y + row / 4,
-                        i % 2,
-                        row % 4,
-                        Style::fg(curve.color),
-                    );
-                }
+            for (column, row) in plot::curve_pixels(sample, y_min, y_max, pixel_height) {
+                canvas.put_braille(
+                    data.x + column / 2,
+                    data.y + row / 4,
+                    column % 2,
+                    row % 4,
+                    Style::fg(curve.color),
+                );
             }
         }
 
@@ -2720,6 +2711,9 @@ impl App {
             Ok(IntegralOutcome::Value(value)) => {
                 self.push_output(result_style(), format!("= {}", format_number(value)));
             }
+            Ok(IntegralOutcome::Exact(value)) => {
+                self.push_output(result_style(), format!("= {}", value));
+            }
             Err(error) => self.push_error(format!("{}", error)),
         }
     }
@@ -2728,7 +2722,10 @@ impl App {
         let variable = match single_variable(variable.trim()) {
             Some(name) => name,
             None => {
-                self.push_error(format!("[ERROR]: unknown solve variable '{}'", variable.trim()));
+                self.push_error(format!(
+                    "[ERROR]: unknown solve variable '{}'",
+                    variable.trim()
+                ));
                 return;
             }
         };
@@ -2790,11 +2787,13 @@ impl App {
     fn command_clear_all(&mut self) {
         self.environment.clear_variables();
         self.environment.clear_functions();
+        self.environment.clear_equations();
         self.curves.clear();
         self.cleared.clear();
         self.scales_visible = false;
         self.var_selection = 0;
         self.side_selection = 0;
+        self.eq_selection = 0;
 
         if let Some(path) = &self.state_path {
             let _ = std::fs::remove_file(path);

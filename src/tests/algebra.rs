@@ -30,7 +30,21 @@ fn antiderivative(expression: &str) -> String {
         .expect("integrate failed")
     {
         IntegralOutcome::Function { source, .. } => source,
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
+    }
+}
+
+// Exact definite result as its printed text (fraction, integer or float)
+fn definite_exact(expression: &str, lower: &str, upper: &str) -> String {
+    let mut environment = Environment::new();
+
+    match environment
+        .integrate(expression, Some((lower, upper)), None)
+        .expect("integrate failed")
+    {
+        IntegralOutcome::Exact(value) => value.to_string(),
+        IntegralOutcome::Value(value) => value.to_string(),
+        IntegralOutcome::Function { .. } => panic!("expected a value"),
     }
 }
 
@@ -42,6 +56,7 @@ fn definite(expression: &str, lower: &str, upper: &str) -> f64 {
         .expect("integrate failed")
     {
         IntegralOutcome::Value(value) => value,
+        IntegralOutcome::Exact(value) => value.to_f64(),
         IntegralOutcome::Function { .. } => panic!("expected a value"),
     }
 }
@@ -71,6 +86,23 @@ fn test_simplify_combines_like_terms() {
 fn test_simplify_combines_powers() {
     assert_eq!(simplified("x*x"), "x^2");
     assert_eq!(simplified("x^2*x^3"), "x^5");
+}
+
+#[test]
+fn test_simplify_factors_common_symbolic_terms() {
+    assert_eq!(simplified("x*sin(x) + 2*sin(x)"), "sin(x)(x + 2)");
+    assert_eq!(simplified("x^2 + x"), "x*(x + 1)");
+    assert_eq!(
+        simplified("1/2*e^(2x+1)*x - 1/4*e^(2x+1)"),
+        "1/4*e^(2x + 1)*(2x - 1)"
+    );
+}
+
+#[test]
+fn test_simplify_keeps_polynomial_without_symbolic_factor() {
+    // A bare numeric gcd is not pulled out, so the polynomial ordering wins
+    assert_eq!(simplified("2*x+2"), "2x + 2");
+    assert_eq!(simplified("2*x+6"), "2x + 6");
 }
 
 #[test]
@@ -234,12 +266,12 @@ fn test_antiderivative_exponential_reciprocal() {
 #[test]
 fn test_antiderivative_by_parts() {
     assert_eq!(antiderivative("(2*x+1)*e^(2*x)"), "e^(2x)*x + C");
-    assert_eq!(antiderivative("x*e^(2*x)"), "1/2*e^(2x)*x - 1/4*e^(2x) + C");
+    assert_eq!(antiderivative("x*e^(2*x)"), "1/4*((2x - 1)e^(2x)) + C");
 }
 
 #[test]
 fn test_antiderivative_by_parts_prefers_logarithm() {
-    assert_eq!(antiderivative("x*ln(x)"), "1/2*ln(x)x^2 - 1/4*x^2 + C");
+    assert_eq!(antiderivative("x*ln(x)"), "1/4*((2*ln(x) - 1)x^2) + C");
 }
 
 #[test]
@@ -254,6 +286,20 @@ fn test_definite_integral_sine() {
     let value = definite("sin(x)", "0", "pi");
 
     assert!((value - 2.0).abs() < 1e-12);
+}
+
+#[test]
+fn test_definite_integral_exact_fraction() {
+    assert_eq!(definite_exact("x^2", "1", "3"), "26/3");
+    assert_eq!(definite_exact("x", "0", "1"), "1/2");
+    assert_eq!(definite_exact("x", "0", "4"), "8");
+}
+
+#[test]
+fn test_definite_integral_cleans_float_noise() {
+    // cos over a full period is exactly zero, not ~1e-16
+    assert_eq!(definite_exact("cos(x)", "0", "2pi"), "0");
+    assert_eq!(definite_exact("cos(x)", "0", "pi"), "0");
 }
 
 #[test]
@@ -287,7 +333,7 @@ fn test_integrate_stores_auto_named_function() {
             assert_eq!(param, 'x');
             assert_eq!(source, "1/3*x^3 + C");
         }
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 
     let value = environment.execute("f(3)").unwrap();
@@ -302,7 +348,7 @@ fn test_integrate_keeps_power_compact() {
 
     match outcome {
         IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/4*(x + 2)^4 + C"),
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 }
 
@@ -315,7 +361,7 @@ fn test_integrate_function_call() {
 
     match outcome {
         IntegralOutcome::Function { source, .. } => assert_eq!(source, "x^2 + C"),
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 }
 
@@ -327,14 +373,14 @@ fn test_integration_constants_use_distinct_letters() {
 
     match first {
         IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/3*x^3 + C"),
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 
     let second = environment.integrate("x", None, None).unwrap();
 
     match second {
         IntegralOutcome::Function { source, .. } => assert_eq!(source, "1/2*x^2 + D"),
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 
     // Setting the constant changes every antiderivative that uses it
@@ -357,7 +403,7 @@ fn test_integrate_with_respect_to_variable() {
             assert_eq!(param, 'y');
             assert!(source.contains("y^2"), "unexpected source {source}");
         }
-        IntegralOutcome::Value(_) => panic!("expected a function"),
+        IntegralOutcome::Value(_) | IntegralOutcome::Exact(_) => panic!("expected a function"),
     }
 }
 

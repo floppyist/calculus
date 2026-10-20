@@ -127,6 +127,73 @@ pub fn column_for_x(x: f64, pixel_width: usize) -> usize {
     column.round().clamp(0.0, (pixel_width - 1) as f64) as usize
 }
 
+// All pixels of a curve: consecutive visible samples are joined with a line,
+// segments touching an out-of-range point are skipped (so asymptotes do not
+// draw a fake vertical line across the pole)
+pub fn curve_pixels(
+    samples: &[Option<f64>],
+    y_min: f64,
+    y_max: f64,
+    pixel_height: usize,
+) -> Vec<(usize, usize)> {
+    let mut pixels = Vec::new();
+    let mut previous: Option<(usize, usize)> = None;
+
+    for (column, sample) in samples.iter().enumerate() {
+        let visible = sample.filter(|y| y.is_finite() && *y >= y_min && *y <= y_max);
+
+        match visible {
+            Some(y) => {
+                let row = row_for(y, y_min, y_max, pixel_height);
+                let point = (column, row);
+
+                if let Some(previous) = previous {
+                    line_pixels(previous, point, &mut pixels);
+                } else {
+                    pixels.push(point);
+                }
+
+                previous = Some(point);
+            }
+            None => previous = None,
+        }
+    }
+
+    pixels
+}
+
+// Bresenham line between two pixel coordinates, endpoints included
+fn line_pixels(from: (usize, usize), to: (usize, usize), out: &mut Vec<(usize, usize)>) {
+    let (mut x0, mut y0) = (from.0 as isize, from.1 as isize);
+    let (x1, y1) = (to.0 as isize, to.1 as isize);
+
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let step_x = if x0 < x1 { 1 } else { -1 };
+    let step_y = if y0 < y1 { 1 } else { -1 };
+    let mut error = dx + dy;
+
+    loop {
+        out.push((x0 as usize, y0 as usize));
+
+        if x0 == x1 && y0 == y1 {
+            break;
+        }
+
+        let double = 2 * error;
+
+        if double >= dy {
+            error += dy;
+            x0 += step_x;
+        }
+
+        if double <= dx {
+            error += dx;
+            y0 += step_y;
+        }
+    }
+}
+
 // Plain colorless text rendering (for non-interactive mode)
 pub fn render(curves: &[(&str, &[Option<f64>])], width: usize, height: usize) -> Vec<String> {
     let sample_refs: Vec<&[Option<f64>]> = curves.iter().map(|(_, samples)| *samples).collect();
@@ -158,17 +225,7 @@ pub fn render(curves: &[(&str, &[Option<f64>])], width: usize, height: usize) ->
     }
 
     for (_, samples) in curves {
-        for (column, sample) in samples.iter().enumerate() {
-            let Some(y) = sample else { continue };
-
-            // Points outside the visible range are dropped instead of being
-            // clamped to the top or bottom edge (which fakes a flat line)
-            if !y.is_finite() || *y < y_min || *y > y_max {
-                continue;
-            }
-
-            let row = row_for(*y, y_min, y_max, pixel_height);
-
+        for (column, row) in curve_pixels(samples, y_min, y_max, pixel_height) {
             set_pixel(&mut cells, width, height, column, row);
         }
     }

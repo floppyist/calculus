@@ -104,6 +104,7 @@ pub enum IntegralOutcome {
         source: String,
     },
     Value(f64),
+    Exact(Rational),
 }
 
 // The solutions of a solved equation
@@ -507,15 +508,33 @@ impl Environment {
             }
 
             Some((lower, upper)) => {
+                // Exact path: rational bounds and a rational antiderivative
+                let lower_rational = self.exact_constant(lower);
+                let upper_rational = self.exact_constant(upper);
+                let antiderivative = algebra::integrate(&ast, variable, &functions);
+
+                if let (Some(lower), Some(upper), Some(antiderivative)) =
+                    (lower_rational, upper_rational, antiderivative.as_ref())
+                    && let (Some(at_upper), Some(at_lower)) = (
+                        exact_at(antiderivative, variable, upper),
+                        exact_at(antiderivative, variable, lower),
+                    )
+                    && let Some(difference) = at_upper.sub(at_lower)
+                {
+                    return Ok(IntegralOutcome::Exact(difference));
+                }
+
                 let lower = self.evaluate_constant(lower)?;
                 let upper = self.evaluate_constant(upper)?;
 
-                let value = match algebra::integrate(&ast, variable, &functions) {
+                let value = match antiderivative {
                     Some(antiderivative) => {
                         let simplified = algebra::simplify(&antiderivative);
 
-                        self.evaluate_at(&simplified, variable, upper)
-                            - self.evaluate_at(&simplified, variable, lower)
+                        clean_zero(
+                            self.evaluate_at(&simplified, variable, upper)
+                                - self.evaluate_at(&simplified, variable, lower),
+                        )
                     }
                     None => self.simpson(&ast, lower, upper, variable),
                 };
@@ -553,6 +572,17 @@ impl Environment {
         }
 
         Ok(self.evaluate_at(&ast, 'x', 0.0))
+    }
+
+    // Exact rational value of a constant expression (None for pi, e, unknowns)
+    fn exact_constant(&self, expression: &str) -> Option<Rational> {
+        let ast = self.parse_and_validate(expression, &[]).ok()?;
+
+        if self.unknown_variable(&ast).is_some() {
+            return None;
+        }
+
+        algebra::fold_rational(&ast)
     }
 
     // Evaluates an expression with one variable bound to a value
@@ -987,6 +1017,20 @@ impl Environment {
 
         Ok(order)
     }
+}
+
+// Exact value of an expression at a rational point, when it stays rational
+fn exact_at(node: &Node, name: char, value: Rational) -> Option<Rational> {
+    let mut replacements = std::collections::HashMap::new();
+
+    replacements.insert(name, algebra::rational_to_node(value));
+
+    algebra::fold_rational(&algebra::substitute(node, &replacements))
+}
+
+// Rounds numerical noise (e.g. sin(2*pi) in f64) down to zero
+fn clean_zero(value: f64) -> f64 {
+    if value.abs() < 1e-12 { 0.0 } else { value }
 }
 
 // Determines the target of one side: single variable, or a function signature on the left
