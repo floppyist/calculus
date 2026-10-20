@@ -929,6 +929,126 @@ impl App {
         if self.scales_visible {
             self.draw_scales(canvas, inner, data, y_min, y_max, pixel_width, pixel_height);
         }
+
+        for (cell, label) in self.intersection_points(y_min, y_max, pixel_width, pixel_height) {
+            self.draw_marker(canvas, data, cell, &label);
+        }
+    }
+
+    // Intersection markers of equations whose two sides are both plotted curves
+    fn intersection_points(
+        &self,
+        y_min: f64,
+        y_max: f64,
+        pixel_width: usize,
+        pixel_height: usize,
+    ) -> Vec<((usize, usize), String)> {
+        let functions = self.environment.function_map();
+        let values = self.environment.values();
+        let mut markers: Vec<((usize, usize), String)> = Vec::new();
+
+        for entry in self.environment.equations() {
+            if entry.solutions.is_empty() {
+                continue;
+            }
+
+            let Some((left, right)) = crate::core::environment::split_equation(&entry.equation)
+            else {
+                continue;
+            };
+
+            let Some(left_curve) = self.curve_for_side(left) else {
+                continue;
+            };
+            let Some(right_curve) = self.curve_for_side(right) else {
+                continue;
+            };
+
+            if std::ptr::eq(left_curve, right_curve) {
+                continue;
+            }
+
+            for solution in &entry.solutions {
+                let Ok(node) = self.environment.expression(solution) else {
+                    continue;
+                };
+
+                let x = node.evaluate(&crate::core::node::EvalContext {
+                    variables: values,
+                    functions: &functions,
+                    depth: 0,
+                });
+
+                let mut variables = values.clone();
+                variables.insert('x', x);
+
+                let y = left_curve.node.evaluate(&crate::core::node::EvalContext {
+                    variables: &variables,
+                    functions: &functions,
+                    depth: 0,
+                });
+
+                if let Some(cell) =
+                    plot::cell_for_point(x, y, y_min, y_max, pixel_width, pixel_height)
+                {
+                    let label = format!("({},{})", format_scale(x), format_scale(y));
+
+                    if !markers.iter().any(|(existing, _)| *existing == cell) {
+                        markers.push((cell, label));
+                    }
+                }
+            }
+        }
+
+        markers
+    }
+
+    // The plotted curve whose source matches a side of an equation
+    fn curve_for_side(&self, side: &str) -> Option<&Curve> {
+        let side = side.trim();
+
+        self.curves.iter().find(|curve| curve.source == side)
+    }
+
+    // A small empty frame around the point plus the coordinate label
+    fn draw_marker(&self, canvas: &mut Canvas, data: Rect, cell: (usize, usize), label: &str) {
+        let (cell_x, cell_y) = (data.x + cell.0, data.y + cell.1);
+        let style = marker_style();
+
+        if cell_x > data.x
+            && cell_x + 1 < data.right()
+            && cell_y > data.y
+            && cell_y + 1 < data.bottom()
+        {
+            canvas.put(cell_x as isize - 1, cell_y as isize - 1, '┌', style);
+            canvas.put(cell_x as isize + 1, cell_y as isize - 1, '┐', style);
+            canvas.put(cell_x as isize - 1, cell_y as isize + 1, '└', style);
+            canvas.put(cell_x as isize + 1, cell_y as isize + 1, '┘', style);
+        }
+
+        let width = label.chars().count() as isize;
+        let mut label_x = cell_x as isize + 2;
+        let mut label_y = cell_y as isize - 1;
+
+        if label_x + width > data.right() as isize {
+            label_x = cell_x as isize - width - 2;
+        }
+        if label_y < data.y as isize {
+            label_y = cell_y as isize + 2;
+        }
+        if label_x < data.x as isize {
+            label_x = data.x as isize;
+        }
+        label_y = label_y.clamp(data.y as isize, data.bottom() as isize - 1);
+
+        canvas.print_clipped(
+            label_x,
+            label_y,
+            data.width
+                .saturating_sub((label_x - data.x as isize).max(0) as usize),
+            label,
+            style,
+        );
     }
 
     // Left gutter width for y-axis labels (0 when there is no room)
@@ -3373,6 +3493,10 @@ fn error_style() -> Style {
 
 fn axis_style() -> Style {
     Style::fg(Color::BrightBlack)
+}
+
+fn marker_style() -> Style {
+    Style::fg(Color::BrightWhite).bold()
 }
 
 fn selected_style() -> Style {

@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 
 use crate::core::node::Node;
-use crate::core::plot::{BRAILLE_BASE, curve_pixels, nice_ticks, render, sample_curve, y_range};
+use crate::core::plot::{
+    BRAILLE_BASE, cell_for_point, curve_pixels, nice_ticks, render, sample_curve, y_range,
+};
 
 fn x_samples(columns: usize) -> Vec<Option<f64>> {
     // The identity y = x suffices for the tests
@@ -83,6 +85,22 @@ fn test_curve_pixels_single_point() {
     let pixels = curve_pixels(&samples, -1.0, 1.0, 9);
 
     assert_eq!(pixels, vec![(0, 4)]);
+}
+
+#[test]
+fn test_cell_for_point_origin_is_centered() {
+    // x = 0 is the middle column, y = 0 the middle row
+    let cell = cell_for_point(0.0, 0.0, -1.0, 1.0, 20, 9);
+
+    assert_eq!(cell, Some((5, 1)));
+}
+
+#[test]
+fn test_cell_for_point_hides_out_of_range_values() {
+    assert_eq!(cell_for_point(0.0, 5.0, -1.0, 1.0, 20, 9), None);
+    assert_eq!(cell_for_point(20.0, 0.0, -1.0, 1.0, 20, 9), None);
+    assert_eq!(cell_for_point(f64::NAN, 0.0, -1.0, 1.0, 20, 9), None);
+    assert_eq!(cell_for_point(0.0, f64::INFINITY, -1.0, 1.0, 20, 9), None);
 }
 
 #[test]

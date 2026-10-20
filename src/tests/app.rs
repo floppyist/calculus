@@ -500,6 +500,42 @@ fn test_clear_all_empties_the_equations_pane() {
 }
 
 #[test]
+fn test_solved_equation_marks_the_intersection() {
+    let mut app = App::new();
+
+    type_line(&mut app, "plot x, 2");
+    type_line(&mut app, "eq f(x)=g(x)");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("(2,2)"),
+        "intersection label missing: {frame}"
+    );
+
+    assert!(
+        frame.contains("(2,2)"),
+        "intersection label missing: {frame}"
+    );
+}
+
+#[test]
+fn test_intersection_requires_two_plotted_sides() {
+    let mut app = App::new();
+
+    // Only one side is plotted, so no marker must appear
+    type_line(&mut app, "plot x");
+    type_line(&mut app, "eq f(x)=3");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        !frame.contains("(3,3)"),
+        "marker drawn without two curves: {frame}"
+    );
+}
+
+#[test]
 fn test_sidebar_lists_builtin_constants() {
     let mut app = App::new();
 

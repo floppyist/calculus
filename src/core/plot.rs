@@ -127,6 +127,29 @@ pub fn column_for_x(x: f64, pixel_width: usize) -> usize {
     column.round().clamp(0.0, (pixel_width - 1) as f64) as usize
 }
 
+// Cell coordinate of a data point, or None when it is not finite/visible
+pub fn cell_for_point(
+    x: f64,
+    y: f64,
+    y_min: f64,
+    y_max: f64,
+    pixel_width: usize,
+    pixel_height: usize,
+) -> Option<(usize, usize)> {
+    if !x.is_finite()
+        || !y.is_finite()
+        || !(X_MIN..=X_MAX).contains(&x)
+        || !(y_min..=y_max).contains(&y)
+    {
+        return None;
+    }
+
+    Some((
+        column_for_x(x, pixel_width) / 2,
+        row_for(y, y_min, y_max, pixel_height) / 4,
+    ))
+}
+
 // All pixels of a curve: consecutive visible samples are joined with a line,
 // segments touching an out-of-range point are skipped (so asymptotes do not
 // draw a fake vertical line across the pole)

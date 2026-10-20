@@ -1330,7 +1330,7 @@ fn single_variable(text: &str) -> Option<char> {
 }
 
 // Splits 'left = right' at a top-level equals sign
-fn split_equation(text: &str) -> Option<(&str, &str)> {
+pub fn split_equation(text: &str) -> Option<(&str, &str)> {
     let mut depth = 0;
 
     for (index, character) in text.char_indices() {
