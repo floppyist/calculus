@@ -17,6 +17,7 @@ pub enum Command {
     ClearHistory,
     History,
     Simplify(String),
+    Factor(String),
     Differentiate(String),
     Print(String),
     Integrate {
@@ -61,6 +62,8 @@ const COMMAND_WORDS: &[&str] = &[
     "hide",
     "simplify",
     "simp",
+    "fac",
+    "factor",
     "diff",
     "derive",
     "derivative",
@@ -177,6 +180,10 @@ pub fn parse_command(input: &str) -> Option<Command> {
 
     if let Some(rest) = keyword_argument(trimmed, &["simplify", "simp"]) {
         return Some(Command::Simplify(rest.to_string()));
+    }
+
+    if let Some(rest) = keyword_argument(trimmed, &["factor", "fac"]) {
+        return Some(Command::Factor(rest.to_string()));
     }
 
     if let Some(rest) = keyword_argument(trimmed, &["diff", "derive", "derivative"]) {

@@ -99,6 +99,10 @@ fn run_plain() -> io::Result<()> {
                     Ok(source) => writeln!(stdout, "= {}", source)?,
                     Err(error) => writeln!(stdout, "{}", error)?,
                 },
+                Command::Factor(expression) => match environment.factor(&expression) {
+                    Ok(source) => writeln!(stdout, "= {}", source)?,
+                    Err(error) => writeln!(stdout, "{}", error)?,
+                },
                 Command::Print(argument) => match environment.print_target(&argument) {
                     Ok(PrintTarget::Function {
                         name,

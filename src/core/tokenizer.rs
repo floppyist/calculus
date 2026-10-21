@@ -247,6 +247,46 @@ fn is_product_name(name: &str) -> bool {
     name.eq_ignore_ascii_case("prod")
 }
 
+// Identifiers written as calls 'name(' that no builtin, reduction or user
+// function resolves: these would silently split into a product (f(x) -> f*x)
+pub fn undefined_function_names(input: &str, known_functions: &[String]) -> Vec<String> {
+    let input = preprocess(input);
+    let mut names = Vec::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if !c.is_ascii_alphabetic() {
+            continue;
+        }
+
+        let mut name = String::from(c);
+
+        while let Some(next) = chars.peek() {
+            if next.is_ascii_alphanumeric() {
+                name.push(chars.next().unwrap());
+            } else {
+                break;
+            }
+        }
+
+        if chars.peek() != Some(&'(') {
+            continue;
+        }
+
+        let known = get_function(&name).is_some()
+            || is_sum_name(&name)
+            || is_product_name(&name)
+            || known_functions.iter().any(|other| other == &name)
+            || split_function_suffix(&name).is_some();
+
+        if !known && !names.contains(&name) {
+            names.push(name);
+        }
+    }
+
+    names
+}
+
 // For an unknown identifier before '(' peel a trailing builtin: xsin( -> x*sin(
 fn split_function_suffix(name: &str) -> Option<(&str, Function)> {
     for (index, _) in name.char_indices().skip(1) {

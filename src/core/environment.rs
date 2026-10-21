@@ -6,7 +6,9 @@ use crate::core::algebra;
 use crate::core::node::{EvalContext, Node};
 use crate::core::parser::{ParseError, generate_ast};
 use crate::core::rational::Rational;
-use crate::core::tokenizer::{TokenizerError, tokenize, tokenize_definition_side};
+use crate::core::tokenizer::{
+    TokenizerError, tokenize, tokenize_definition_side, undefined_function_names,
+};
 
 // Names auto assigned to plotted curves ('e' is reserved for Euler's number)
 const AUTO_NAMES: &str = "fghijklmnopqrstuvwxyzabcd";
@@ -359,6 +361,15 @@ impl Environment {
         Ok(algebra::to_source(&simplified))
     }
 
+    // Factored source text of an expression (polynomial factoring when possible)
+    pub fn factor(&self, expression: &str) -> Result<String, EvalError> {
+        let ast = self.parse_and_validate(expression, &[])?;
+        let functions = self.function_map();
+        let expanded = algebra::expand_calls(&ast, &functions, 0);
+
+        Ok(algebra::to_source(&algebra::factor(&expanded, 'x')))
+    }
+
     // Differentiates an expression and stores it as a new one-parameter function
     pub fn differentiate(&mut self, expression: &str) -> Result<(String, String), EvalError> {
         let ast = algebra::simplify(&self.parse_and_validate(expression, &[])?);
@@ -372,7 +383,41 @@ impl Environment {
 
     // Solves an equation for a variable; returns the solution expressions
     pub fn solve(&mut self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
+        let outcome = self.solve_preview(equation, variable)?;
+
+        if !outcome.solutions.is_empty() {
+            let equation = equation.trim().to_string();
+
+            match self
+                .equations
+                .iter_mut()
+                .find(|entry| entry.equation == equation && entry.variable == variable)
+            {
+                Some(entry) => entry.solutions = outcome.solutions.clone(),
+                None => self.equations.push(EquationEntry {
+                    equation,
+                    variable,
+                    solutions: outcome.solutions.clone(),
+                }),
+            }
+        }
+
+        Ok(outcome)
+    }
+
+    // Solves without storing the equation, so the UI can refresh a preview live
+    pub fn solve_preview(&self, equation: &str, variable: char) -> Result<SolveOutcome, EvalError> {
         let (left, right) = split_equation(equation).ok_or(EvalError::InvalidAssignment)?;
+
+        // f(x) with f unknown would split into f*x and give a bogus solution
+        let known: Vec<String> = self.functions.keys().cloned().collect();
+
+        for side in [left, right] {
+            if let Some(name) = undefined_function_names(side, &known).into_iter().next() {
+                return Err(EvalError::FunctionNotDefined(name));
+            }
+        }
+
         let functions = self.function_map();
         let left = algebra::expand_calls(&self.parse_and_validate(left, &[])?, &functions, 0);
         let right = algebra::expand_calls(&self.parse_and_validate(right, &[])?, &functions, 0);
@@ -391,23 +436,6 @@ impl Environment {
                 roots.iter().map(|root| format_root(*root)).collect()
             }
         };
-
-        if !solutions.is_empty() {
-            let equation = equation.trim().to_string();
-
-            match self
-                .equations
-                .iter_mut()
-                .find(|entry| entry.equation == equation && entry.variable == variable)
-            {
-                Some(entry) => entry.solutions = solutions.clone(),
-                None => self.equations.push(EquationEntry {
-                    equation,
-                    variable,
-                    solutions: solutions.clone(),
-                }),
-            }
-        }
 
         Ok(SolveOutcome {
             variable,

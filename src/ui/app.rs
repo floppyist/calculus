@@ -60,6 +60,7 @@ const HELP_LINES: &[&str] = &[
     "",
     "Calculus",
     "  simp <expr>               rewrite an expression in a compact form",
+    "  fac <expr>                factorise a polynomial",
     "  diff <expr>               derivative d/dx, stored as a new function",
     "  int <expr>                antiderivative with its own constant letter",
     "  int <expr>, y             integrate with respect to y",
@@ -232,7 +233,7 @@ impl App {
             side_visual: None,
             input_visual: None,
             hide_info: false,
-            show_plot: true,
+            show_plot: false,
             show_vars: false,
             show_funcs: false,
             show_eq: false,
@@ -619,7 +620,7 @@ impl App {
             return;
         }
 
-        if !self.show_plot || self.curves.is_empty() {
+        if !self.show_plot {
             self.draw_output(canvas, main);
             return;
         }
@@ -774,15 +775,15 @@ impl App {
             return;
         };
 
-        if rect.height < 2 || rect.width < 4 {
+        if rect.height < 2 || rect.width < 6 {
             return;
         }
 
         canvas.print_clipped(
-            rect.x as isize + 2,
+            rect.x as isize + 3,
             rect.bottom() as isize - 1,
-            rect.width.saturating_sub(4),
-            error,
+            rect.width.saturating_sub(5),
+            &format!(" {}", error),
             error_style(),
         );
     }
@@ -849,7 +850,12 @@ impl App {
             .collect();
 
         let refs: Vec<&[Option<f64>]> = samples.iter().map(|sample| sample.as_slice()).collect();
-        let y_range = plot::y_range(&refs);
+        // With no curves yet, draw a plain default coordinate system
+        let y_range = if self.curves.is_empty() {
+            Some((plot::X_MIN, plot::X_MAX))
+        } else {
+            plot::y_range(&refs)
+        };
 
         let title = match y_range {
             Some((y_min, y_max)) => format!(
@@ -958,10 +964,6 @@ impl App {
         let mut markers: Vec<((usize, usize), String)> = Vec::new();
 
         for entry in self.environment.equations() {
-            if entry.solutions.is_empty() {
-                continue;
-            }
-
             let Some((left, right)) = crate::core::environment::split_equation(&entry.equation)
             else {
                 continue;
@@ -978,7 +980,18 @@ impl App {
                 continue;
             }
 
-            for solution in &entry.solutions {
+            // Re-solve live so edits to the functions move the markers; fall
+            // back to the stored solutions when the equation no longer solves
+            let solutions = match self
+                .environment
+                .solve_preview(&entry.equation, entry.variable)
+            {
+                Ok(outcome) if !outcome.solutions.is_empty() => outcome.solutions,
+                Ok(_) => Vec::new(),
+                Err(_) => entry.solutions.clone(),
+            };
+
+            for solution in &solutions {
                 let Ok(node) = self.environment.expression(solution) else {
                     continue;
                 };
@@ -2727,6 +2740,7 @@ impl App {
             }
             Command::History => self.command_history(),
             Command::Simplify(expression) => self.command_simplify(&expression),
+            Command::Factor(expression) => self.command_factor(&expression),
             Command::Differentiate(expression) => {
                 self.command_differentiate(&expression);
                 self.persist();
@@ -2761,6 +2775,16 @@ impl App {
         match self.environment.simplify(expression) {
             Ok(source) => {
                 let origin = format!("simp {}", expression.trim());
+                self.push_result(origin, result_style(), format!("= {}", source));
+            }
+            Err(error) => self.push_error(format!("{}", error)),
+        }
+    }
+
+    fn command_factor(&mut self, expression: &str) {
+        match self.environment.factor(expression) {
+            Ok(source) => {
+                let origin = format!("fac {}", expression.trim());
                 self.push_result(origin, result_style(), format!("= {}", source));
             }
             Err(error) => self.push_error(format!("{}", error)),

@@ -147,6 +147,19 @@ fn test_parse_simplify() {
 }
 
 #[test]
+fn test_parse_factor() {
+    assert!(matches!(
+        command::parse_command("factor x^2-1"),
+        Some(Command::Factor(ref s)) if s == "x^2-1"
+    ));
+    assert!(matches!(
+        command::parse_command("fac x^2-1"),
+        Some(Command::Factor(ref s)) if s == "x^2-1"
+    ));
+    assert!(command::parse_command("faculty").is_none());
+}
+
+#[test]
 fn test_parse_print() {
     assert!(matches!(
         command::parse_command("print f(x)"),
@@ -331,6 +344,8 @@ fn test_command_prefix_matches_complete_keywords() {
     assert_eq!(command::command_prefix("eq f(x)=g(x)"), Some(2));
     assert_eq!(command::command_prefix("?"), Some(1));
     assert_eq!(command::command_prefix("solve x^2=4, x"), Some(5));
+    assert_eq!(command::command_prefix("fac x^2-1"), Some(3));
+    assert_eq!(command::command_prefix("factor x^2-1"), Some(6));
 }
 
 #[test]

@@ -318,6 +318,13 @@ impl Coeff {
         }
     }
 
+    fn to_rational(self) -> Option<Rational> {
+        match self {
+            Coeff::Rational(rational) => Some(rational),
+            Coeff::Float(_) => None,
+        }
+    }
+
     fn to_node(self) -> Node {
         match self {
             Coeff::Rational(rational) => rational_to_node(rational),
@@ -340,6 +347,10 @@ impl Coeff {
                 .unwrap_or_else(|| Coeff::Float(left.to_f64() + right.to_f64())),
             _ => Coeff::Float(self.to_f64() + other.to_f64()),
         }
+    }
+
+    fn sub(self, other: Coeff) -> Coeff {
+        self.add(other.neg())
     }
 
     fn mul(self, other: Coeff) -> Coeff {
@@ -657,6 +668,20 @@ pub fn simplify(node: &Node) -> Node {
     }
 }
 
+// Factors an expression: a polynomial in `name` into linear/irreducible
+// factors, otherwise the simplified compact form
+pub fn factor(node: &Node, name: char) -> Node {
+    if let Some(poly) = to_polynomial(node, name) {
+        if poly.len() > 2 {
+            return factor_polynomial(&poly, name);
+        }
+
+        return poly_to_node(&poly, name);
+    }
+
+    simplify(node)
+}
+
 fn simplify_neg(inner: Node) -> Node {
     match inner {
         Node::IntNumber(value) => number(-(value as f64)),
@@ -827,23 +852,24 @@ fn expand(node: &Node) -> Node {
         Node::Add(left, right) => add(expand(left), expand(right)),
         Node::Sub(left, right) => sub(expand(left), expand(right)),
         Node::Mul(left, right) => distribute(expand(left), expand(right)),
-        Node::Div(numerator, denominator) => div(expand(numerator), expand(denominator)),
-        Node::Pow(base, exponent) => {
-            let base = expand(base);
+        // Only the numerator expands: a multiplied-out denominator like
+        // 2*x*x + 2 would never be re-collected into 2(x^2 + 1)
+        Node::Div(numerator, denominator) => div(expand(numerator), (**denominator).clone()),
+        Node::Pow(base, exponent) => match as_integer(exponent) {
+            Some(power) if (1.0..=MAX_EXPAND_POWER).contains(&power) => {
+                let base = expand(base);
+                let mut result = base.clone();
 
-            match as_integer(exponent) {
-                Some(power) if (1.0..=MAX_EXPAND_POWER).contains(&power) => {
-                    let mut result = base.clone();
-
-                    for _ in 1..power as usize {
-                        result = distribute(result, base.clone());
-                    }
-
-                    result
+                for _ in 1..power as usize {
+                    result = distribute(result, base.clone());
                 }
-                _ => pow(base, (**exponent).clone()),
+
+                result
             }
-        }
+            // Without a real multiplication the base stays untouched, so a
+            // power like (x^2 - 4x + 5)^-1 never becomes x x - 4x + 5
+            _ => pow((**base).clone(), (**exponent).clone()),
+        },
         // Function arguments stay as they are: expanding a power inside a call
         // like sin(x^2) would rewrite it to sin(x x)
         Node::Builtin(..) | Node::Call(..) => node.clone(),
@@ -1350,6 +1376,19 @@ fn to_polynomial(node: &Node, name: char) -> Option<Vec<Coeff>> {
 
             Some(poly_pow(&base, power as usize))
         }
+        Node::Div(numerator, denominator) => {
+            let numerator = to_polynomial(numerator, name)?;
+            let denominator = to_polynomial(denominator, name)?;
+
+            // Only division by a non-zero constant stays polynomial
+            if denominator.len() != 1 || denominator[0].is_zero() {
+                return None;
+            }
+
+            let inverse = Coeff::one().div(denominator[0]);
+
+            Some(poly_scale(&numerator, inverse))
+        }
         _ => None,
     }
 }
@@ -1470,6 +1509,190 @@ fn poly_to_node(poly: &[Coeff], name: char) -> Node {
     }
 
     build_sum(grouped)
+}
+
+// Factors a polynomial in `name` over the rationals into linear and
+// irreducible quadratic factors, e.g. x^2 - 1 -> (x - 1)(x + 1)
+fn factor_polynomial(poly: &[Coeff], name: char) -> Node {
+    let mut remaining = poly_trim(poly);
+
+    if remaining.is_empty() {
+        return number(0.0);
+    }
+
+    // Factor the positive-leading part and reapply the sign afterwards
+    let negate = remaining[remaining.len() - 1].is_negative();
+
+    if negate {
+        remaining = remaining
+            .iter()
+            .map(|coefficient| coefficient.neg())
+            .collect();
+    }
+
+    let mut factors: Vec<Node> = Vec::new();
+
+    // Pull out every rational root as a linear factor (q*x - p for root p/q)
+    while remaining.len() > 1 {
+        let Some(root) = rational_root(&remaining) else {
+            break;
+        };
+
+        let (numerator, denominator) = match root {
+            Coeff::Rational(rational) => (rational.numerator(), rational.denominator()),
+            Coeff::Float(_) => break,
+        };
+
+        factors.push(linear_factor(numerator, denominator, name));
+
+        let divisor = vec![Coeff::from_i128(-numerator), Coeff::from_i128(denominator)];
+
+        match poly_divmod(&remaining, &divisor) {
+            Some((quotient, _)) => remaining = quotient,
+            None => break,
+        }
+    }
+
+    // The leftover carries the leading coefficient of the polynomial
+    let leftover_is_unit = remaining.len() == 1 && remaining[0].is_one();
+
+    if !remaining.is_empty() && !leftover_is_unit {
+        factors.push(poly_to_node(&remaining, name));
+    }
+
+    if factors.is_empty() {
+        return number(0.0);
+    }
+
+    let product = combine_factors(factors);
+
+    if negate { neg(product) } else { product }
+}
+
+// A rational root of a rational-coefficient polynomial, if one exists
+fn rational_root(poly: &[Coeff]) -> Option<Coeff> {
+    let poly = poly_trim(poly);
+
+    if poly.len() < 2 {
+        return None;
+    }
+
+    let mut rationals: Vec<Rational> = Vec::with_capacity(poly.len());
+
+    for coefficient in &poly {
+        rationals.push(coefficient.to_rational()?);
+    }
+
+    // Underflow when the constant term vanishes: x is a root
+    if rationals[0].to_integer() == Some(0) {
+        return Some(Coeff::Rational(Rational::from_integer(0)));
+    }
+
+    // Clear denominators to apply the rational root theorem on integers
+    let mut scale = 1i128;
+
+    for rational in &rationals {
+        scale = lcm(scale, rational.denominator());
+    }
+
+    let integers: Vec<i128> = rationals
+        .iter()
+        .map(|rational| rational.numerator() * (scale / rational.denominator()))
+        .collect();
+
+    let constant = integers[0].abs();
+    let leading = integers[integers.len() - 1].abs();
+
+    for p in divisors(constant) {
+        for q in divisors(leading) {
+            for sign in [1i128, -1] {
+                let (numerator, denominator) = (sign * p, q);
+
+                if evaluates_to_zero(&integers, numerator, denominator) {
+                    return Rational::new(numerator, denominator).map(Coeff::Rational);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn lcm(left: i128, right: i128) -> i128 {
+    if left == 0 || right == 0 {
+        return left.abs().max(right.abs());
+    }
+
+    (left.abs() / gcd(left, right)) * right.abs()
+}
+
+fn gcd(left: i128, right: i128) -> i128 {
+    let (mut a, mut b) = (left.abs(), right.abs());
+
+    while b != 0 {
+        let remainder = a % b;
+        a = b;
+        b = remainder;
+    }
+
+    a.max(1)
+}
+
+fn evaluates_to_zero(coefficients: &[i128], numerator: i128, denominator: i128) -> bool {
+    // Horner evaluation of sum a_i * (p/q)^i scaled by q^(n-1)
+    let degree = coefficients.len() - 1;
+    let mut accumulator = coefficients[degree];
+
+    for index in (0..degree).rev() {
+        accumulator = accumulator * numerator
+            + coefficients[index] * denominator.pow((degree - index) as u32);
+    }
+
+    accumulator == 0
+}
+
+fn divisors(value: i128) -> Vec<i128> {
+    let value = value.abs();
+
+    if value == 0 {
+        return vec![1];
+    }
+
+    let mut result = Vec::new();
+
+    let mut factor = 1;
+
+    while factor * factor <= value {
+        if value % factor == 0 {
+            result.push(factor);
+
+            if factor != value / factor {
+                result.push(value / factor);
+            }
+        }
+
+        factor += 1;
+    }
+
+    result
+}
+
+// (q*x - p) built with readable signs
+fn linear_factor(numerator: i128, denominator: i128, name: char) -> Node {
+    let slope = Coeff::from_i128(denominator);
+    let offset = Coeff::from_i128(-numerator);
+
+    let base = make_term(slope, variable(name));
+
+    if offset.is_zero() {
+        return base;
+    }
+
+    if offset.is_negative() {
+        sub(base, make_term(offset.neg(), number(1.0)))
+    } else {
+        add(base, make_term(offset, number(1.0)))
+    }
 }
 
 // Attaches a numeric coefficient to a node, keeping readable forms
@@ -1856,6 +2079,521 @@ pub fn integrate(
     integral(node, name, functions, 0)
 }
 
+// --- rational integration ---------------------------------------------
+
+// A monic factor of a polynomial denominator
+#[derive(Clone)]
+enum PolyFactor {
+    // (x - root), root rational
+    Linear(Coeff),
+    // (x^2 + b*x + c) with irrational roots
+    Quadratic(Coeff, Coeff),
+}
+
+// Integrates P(x) / Q(x) exactly: polynomial division plus partial fractions
+fn integrate_rational(
+    numerator: &Node,
+    denominator: &Node,
+    name: char,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+    depth: usize,
+) -> Option<Node> {
+    let numerator = to_polynomial(numerator, name)?;
+    let denominator = to_polynomial(denominator, name)?;
+
+    if denominator.len() < 2 {
+        return None;
+    }
+
+    let (quotient, remainder) = poly_divmod(&numerator, &denominator)?;
+    let mut result = if quotient.is_empty() {
+        None
+    } else {
+        Some(integrate_polynomial(&quotient, name))
+    };
+
+    let remainder = poly_trim(&remainder);
+
+    if !remainder.is_empty() {
+        let partial = integrate_proper_fraction(&remainder, &denominator, name, functions, depth)?;
+
+        result = Some(match result {
+            Some(existing) => add(existing, partial),
+            None => partial,
+        });
+    }
+
+    result
+}
+
+// Sum of a_degree * x^degree integrated term by term
+fn integrate_polynomial(poly: &[Coeff], name: char) -> Node {
+    let mut terms = Vec::new();
+
+    for (degree, coefficient) in poly.iter().enumerate() {
+        if coefficient.is_zero() {
+            continue;
+        }
+
+        let power = degree as f64 + 1.0;
+        let base = pow(variable(name), number(power));
+
+        terms.push(div(make_term(*coefficient, base), number(power)));
+    }
+
+    match terms.len() {
+        0 => number(0.0),
+        1 => terms.remove(0),
+        _ => {
+            let mut result = terms.remove(0);
+
+            for term in terms {
+                result = add(result, term);
+            }
+
+            result
+        }
+    }
+}
+
+// Partial fraction decomposition of a proper fraction P/Q, integrated termwise
+fn integrate_proper_fraction(
+    numerator: &[Coeff],
+    denominator: &[Coeff],
+    name: char,
+    functions: &HashMap<String, (Vec<char>, Node)>,
+    depth: usize,
+) -> Option<Node> {
+    let _ = functions;
+    let _ = depth;
+
+    let factors = factor_with_multiplicity(denominator)?;
+
+    // One unknown per coefficient of each partial fraction term
+    let mut unknowns: Vec<(usize, usize, usize)> = Vec::new();
+
+    for (index, (factor, multiplicity)) in factors.iter().enumerate() {
+        let shapes = match factor {
+            PolyFactor::Linear(_) => 1,
+            PolyFactor::Quadratic(_, _) => 2,
+        };
+
+        for power in 1..=*multiplicity {
+            for offset in 0..shapes {
+                unknowns.push((index, power, offset));
+            }
+        }
+    }
+
+    let bases = partial_fraction_bases(denominator, &factors, &unknowns)?;
+    let solution = solve_partial_fractions(numerator, &bases, unknown_count(&unknowns))?;
+
+    let mut result: Option<Node> = None;
+
+    for (j, (index, power, offset)) in unknowns.iter().enumerate() {
+        let coefficient = solution[j];
+
+        if coefficient.is_zero() {
+            continue;
+        }
+
+        let term = match &factors[*index].0 {
+            PolyFactor::Linear(root) => {
+                Some(integrate_linear_fraction(coefficient, *root, *power, name))
+            }
+            PolyFactor::Quadratic(b, c) => {
+                let (b_coefficient, c_coefficient) = if *offset == 0 {
+                    (Coeff::zero(), coefficient)
+                } else {
+                    (coefficient, Coeff::zero())
+                };
+
+                integrate_quadratic_fraction(b_coefficient, c_coefficient, *b, *c, *power, name)
+            }
+        };
+
+        let Some(term) = term else {
+            continue;
+        };
+
+        result = Some(match result {
+            Some(existing) => add(existing, term),
+            None => term,
+        });
+    }
+
+    result
+}
+
+fn unknown_count(unknowns: &[(usize, usize, usize)]) -> usize {
+    unknowns.len()
+}
+
+// B_j(x) = shape_j(x) * (Q / f_i^power); P = sum coefficient_j * B_j
+fn partial_fraction_bases(
+    denominator: &[Coeff],
+    factors: &[(PolyFactor, usize)],
+    unknowns: &[(usize, usize, usize)],
+) -> Option<Vec<Vec<Coeff>>> {
+    let mut bases = Vec::with_capacity(unknowns.len());
+
+    for (index, power, offset) in unknowns {
+        let (factor, multiplicity) = &factors[*index];
+        let shape = factor_poly(factor);
+
+        // Q / f_i^power = (Q / f_i^multiplicity) * f_i^(multiplicity - power)
+        let mut base = denominator.to_vec();
+
+        for _ in 0..*multiplicity {
+            base = poly_divmod(&base, &shape)?.0;
+        }
+
+        base = poly_mul(&base, &poly_pow(&shape, *multiplicity - *power));
+
+        let basis = if *offset == 0 {
+            base
+        } else {
+            poly_mul(&base, &[Coeff::zero(), Coeff::one()])
+        };
+
+        bases.push(basis);
+    }
+
+    Some(bases)
+}
+
+// Solves sum basis_j[d] * coefficient_j = numerator[d] exactly
+fn solve_partial_fractions(
+    numerator: &[Coeff],
+    bases: &[Vec<Coeff>],
+    unknown_count: usize,
+) -> Option<Vec<Coeff>> {
+    if unknown_count == 0 {
+        return None;
+    }
+
+    let width = numerator.len().max(
+        bases
+            .iter()
+            .map(|basis| basis.len())
+            .max()
+            .unwrap_or_default(),
+    );
+
+    if width == 0 {
+        return None;
+    }
+
+    let mut rows: Vec<Vec<Rational>> = Vec::with_capacity(width);
+
+    for power in 0..width {
+        let mut row = Vec::with_capacity(unknown_count + 1);
+
+        for basis in bases {
+            let coefficient = basis
+                .get(power)
+                .copied()
+                .unwrap_or_else(Coeff::zero)
+                .to_rational()?;
+
+            row.push(coefficient);
+        }
+
+        let known = numerator
+            .get(power)
+            .copied()
+            .unwrap_or_else(Coeff::zero)
+            .to_rational()?;
+
+        row.push(known);
+        rows.push(row);
+    }
+
+    let solved = gaussian_solve(rows, unknown_count)?;
+
+    Some(solved.into_iter().map(Coeff::Rational).collect())
+}
+
+// Exact Gaussian elimination over the rationals
+fn gaussian_solve(mut rows: Vec<Vec<Rational>>, columns: usize) -> Option<Vec<Rational>> {
+    let zero = Rational::from_integer(0);
+    let mut col = 0;
+    let mut row = 0;
+
+    while col < columns && row < rows.len() {
+        let pivot = (row..rows.len()).find(|r| rows[*r][col] != zero)?;
+
+        rows.swap(row, pivot);
+
+        let divisor = rows[row][col];
+
+        for entry in rows[row].iter_mut() {
+            *entry = entry.div(divisor)?;
+        }
+
+        for r in 0..rows.len() {
+            if r != row && rows[r][col] != zero {
+                let factor = rows[r][col];
+                let pivot_copy = rows[row].clone();
+
+                for (target, source) in rows[r].iter_mut().zip(pivot_copy) {
+                    *target = target.sub(factor.mul(source)?)?;
+                }
+            }
+        }
+
+        row += 1;
+        col += 1;
+    }
+
+    let mut solution = vec![zero; columns];
+
+    for row in rows.iter().take(columns) {
+        for c in 0..columns {
+            if row[c] != zero {
+                solution[c] = row[columns];
+                break;
+            }
+        }
+    }
+
+    Some(solution)
+}
+
+fn factor_poly(factor: &PolyFactor) -> Vec<Coeff> {
+    match factor {
+        PolyFactor::Linear(root) => vec![root.neg(), Coeff::one()],
+        PolyFactor::Quadratic(b, c) => vec![*c, *b, Coeff::one()],
+    }
+}
+
+// Monic factorisation of a denominator into linears and irreducible quadratics
+fn factor_with_multiplicity(denominator: &[Coeff]) -> Option<Vec<(PolyFactor, usize)>> {
+    let mut remaining = poly_trim(denominator);
+
+    if remaining.len() < 2 {
+        return None;
+    }
+
+    // Scale to a monic polynomial so the factors are monic
+    let leading = remaining[remaining.len() - 1];
+    remaining = poly_scale(&remaining, Coeff::one().div(leading));
+
+    let mut factors: Vec<(PolyFactor, usize)> = Vec::new();
+
+    // Linear factors from rational roots, counting multiplicity
+    loop {
+        let Some(root) = rational_root(&remaining) else {
+            break;
+        };
+
+        let shape = vec![root.neg(), Coeff::one()];
+        let mut multiplicity = 0;
+
+        while let Some((quotient, remainder)) = poly_divmod(&remaining, &shape)
+            && poly_trim(&remainder).is_empty()
+        {
+            remaining = quotient;
+            multiplicity += 1;
+        }
+
+        factors.push((PolyFactor::Linear(root), multiplicity));
+    }
+
+    // The remainder is a product of irreducible quadratics
+    while remaining.len() > 1 {
+        if remaining.len() == 2 {
+            // A leftover linear factor without a rational root
+            return None;
+        }
+
+        let (quadratic, multiplicity) = extract_quadratic_factor(&remaining)?;
+
+        let shape = factor_poly(&quadratic);
+
+        for _ in 0..multiplicity {
+            remaining = poly_divmod(&remaining, &shape)?.0;
+        }
+
+        factors.push((quadratic, multiplicity));
+    }
+
+    Some(factors)
+}
+
+// Range of the linear coefficient when searching for a quadratic divisor
+const QUADRATIC_SEARCH: i128 = 16;
+
+// Finds a monic quadratic divisor of a monic integer polynomial
+fn extract_quadratic_factor(poly: &[Coeff]) -> Option<(PolyFactor, usize)> {
+    let mut integers = Vec::with_capacity(poly.len());
+
+    for coefficient in poly {
+        integers.push(coefficient.to_rational()?.to_integer()?);
+    }
+
+    let degree = integers.len() - 1;
+
+    if degree < 2 || degree % 2 != 0 {
+        return None;
+    }
+
+    let constant = integers[0];
+
+    if constant == 0 {
+        return None;
+    }
+
+    for divisor in divisors(constant.abs()) {
+        for sign in [1i128, -1] {
+            let c = sign * divisor;
+
+            for b in -QUADRATIC_SEARCH..=QUADRATIC_SEARCH {
+                let shape = vec![Coeff::from_i128(c), Coeff::from_i128(b), Coeff::one()];
+
+                let mut rest = poly_trim(poly);
+                let mut multiplicity = 0;
+
+                while let Some((quotient, remainder)) = poly_divmod(&rest, &shape)
+                    && poly_trim(&remainder).is_empty()
+                {
+                    rest = quotient;
+                    multiplicity += 1;
+                }
+
+                if multiplicity > 0 {
+                    return Some((
+                        PolyFactor::Quadratic(Coeff::from_i128(b), Coeff::from_i128(c)),
+                        multiplicity,
+                    ));
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// A/(x - r)^power
+fn integrate_linear_fraction(coefficient: Coeff, root: Coeff, power: usize, name: char) -> Node {
+    let base = add(variable(name), make_term(root.neg(), number(1.0)));
+
+    if power == 1 {
+        return make_term(coefficient, ln(abs(base)));
+    }
+
+    let exponent = Coeff::from_i128(-((power as i128) - 1));
+    let scaled = coefficient.div(Coeff::from_i128(-((power as i128) - 1)));
+
+    make_term(scaled, pow(base, exponent.to_node()))
+}
+
+// (B*x + C)/(x^2 + b*x + c)^power
+fn integrate_quadratic_fraction(
+    b_coefficient: Coeff,
+    c_coefficient: Coeff,
+    b: Coeff,
+    c: Coeff,
+    power: usize,
+    name: char,
+) -> Option<Node> {
+    let squared = pow(variable(name), number(2.0));
+
+    let quadratic = match (b.is_zero(), c.is_zero()) {
+        (true, true) => squared,
+        (true, false) => add(squared, c.to_node()),
+        (false, true) => add(squared, make_term(b, variable(name))),
+        (false, false) => add(add(squared, make_term(b, variable(name))), c.to_node()),
+    };
+
+    // Split B*x + C into (B/2)*(2x + b) plus a constant remainder
+    let half_b = b_coefficient.div(Coeff::from_i128(2));
+    let remainder = c_coefficient.sub(half_b.mul(b));
+
+    let mut result: Option<Node> = None;
+
+    if !half_b.is_zero() {
+        let term = if power == 1 {
+            make_term(half_b, ln(abs(quadratic.clone())))
+        } else {
+            let exponent = Coeff::from_i128(-((power as i128) - 1));
+            let scaled = half_b.div(Coeff::from_i128(-((power as i128) - 1)));
+
+            make_term(scaled, pow(quadratic.clone(), exponent.to_node()))
+        };
+
+        result = Some(term);
+    }
+
+    if !remainder.is_zero() {
+        let term = integrate_quadratic_repeated(remainder, b, c, power, name)?;
+
+        result = Some(match result {
+            Some(existing) => add(existing, term),
+            None => term,
+        });
+    }
+
+    result
+}
+
+// D / (x^2 + b*x + c)^power via u = (x + b/2)/a, a^2 = c - b^2/4
+fn integrate_quadratic_repeated(
+    coefficient: Coeff,
+    b: Coeff,
+    c: Coeff,
+    power: usize,
+    name: char,
+) -> Option<Node> {
+    let a_squared = c.to_f64() - (b.to_f64() / 2.0).powi(2);
+
+    if a_squared <= 0.0 {
+        return None;
+    }
+
+    let a = a_squared.sqrt();
+    let center = b.to_f64() / 2.0;
+
+    let base = if center == 0.0 {
+        variable(name)
+    } else {
+        add(variable(name), number(center))
+    };
+
+    let u = if a == 1.0 { base } else { div(base, number(a)) };
+
+    let integral = reduced_arctan(u, power);
+
+    // x = a*u - b/2 turns dx into a*du: the scale is a / a^(2*power)
+    let scale = coefficient.to_f64() / a.powi(2 * power as i32 - 1);
+
+    Some(make_term(Coeff::Float(scale), integral))
+}
+
+// Closed form of ∫ du/(1 + u^2)^power
+fn reduced_arctan(u: Node, power: usize) -> Node {
+    if power == 1 {
+        return builtin(Function::Atan, u);
+    }
+
+    // I_k = u / (2(k-1)(1+u^2)^(k-1)) + (2k-3)/(2(k-1)) * I_{k-1}
+    let k = power as f64;
+
+    let quadratic = add(number(1.0), pow(u.clone(), number(2.0)));
+
+    let power_node = if k - 1.0 == 1.0 {
+        quadratic
+    } else {
+        pow(quadratic, number(k - 1.0))
+    };
+
+    let first = div(u.clone(), mul(number(2.0 * (k - 1.0)), power_node));
+
+    let factor = (2.0 * k - 3.0) / (2.0 * (k - 1.0));
+
+    add(first, mul(number(factor), reduced_arctan(u, power - 1)))
+}
+
 fn integral(
     node: &Node,
     name: char,
@@ -1907,6 +2645,13 @@ fn integral(
         }
 
         Node::Div(numerator, denominator) => {
+            // Polynomial over polynomial: division and partial fractions
+            if let Some(rational) =
+                integrate_rational(numerator, denominator, name, functions, depth)
+            {
+                return Some(rational);
+            }
+
             if !has_var(denominator, name) {
                 Some(mul(
                     div(number(1.0), (**denominator).clone()),

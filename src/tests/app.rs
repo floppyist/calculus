@@ -531,6 +531,136 @@ fn test_intersection_requires_two_plotted_sides() {
 }
 
 #[test]
+fn test_factor_command_reports_the_product() {
+    let mut app = App::new();
+
+    type_line(&mut app, "fac x^2-1");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("(x + 1)(x - 1)"),
+        "factor result missing: {frame}"
+    );
+}
+
+#[test]
+fn test_show_plot_without_curves_draws_axes() {
+    let mut app = App::new();
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        !frame.contains("Plot  x:"),
+        "plot pane shown by default: {frame}"
+    );
+
+    type_line(&mut app, "show plot");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("Plot  x:"),
+        "empty plot pane not revealed: {frame}"
+    );
+}
+
+#[test]
+fn test_equation_with_undefined_function_reports_error() {
+    let mut app = App::new();
+
+    type_line(&mut app, "eq f(x)=g(x)");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("Function 'f' is not defined"),
+        "missing undefined-function error: {frame}"
+    );
+}
+
+// The rows of a rendered frame, with ANSI escapes removed
+fn frame_rows(frame: &str) -> Vec<String> {
+    let mut rows: Vec<String> = Vec::new();
+    let mut chars = frame.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+
+                let mut sequence = String::new();
+
+                for next in chars.by_ref() {
+                    sequence.push(next);
+
+                    if next.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+
+                // A "row;1H" cursor move starts a new row
+                if sequence.ends_with(";1H") {
+                    rows.push(String::new());
+                }
+            }
+        } else if let Some(row) = rows.last_mut() {
+            row.push(ch);
+        } else {
+            rows.push(ch.to_string());
+        }
+    }
+
+    rows
+}
+
+fn row_with(frame: &str, needle: &str) -> Option<String> {
+    frame_rows(frame)
+        .into_iter()
+        .find(|row| row.contains(needle))
+}
+
+#[test]
+fn test_error_status_line_is_indented_inside_the_border() {
+    let mut app = App::new();
+
+    type_line(&mut app, "zzz");
+
+    let frame = app.render(80, 24);
+    let row = row_with(&frame, "[ERROR]").expect("error row missing");
+
+    assert!(
+        row.starts_with("└── [ERROR]"),
+        "error should be indented after the corner: {row:?}"
+    );
+}
+
+#[test]
+fn test_intersection_points_refresh_reactively() {
+    let mut app = App::new();
+
+    type_line(&mut app, "a=2");
+    type_line(&mut app, "plot x, x/2+a");
+    type_line(&mut app, "eq f(x)=g(x)");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("(4,4)"),
+        "first intersection missing: {frame}"
+    );
+
+    type_line(&mut app, "a=5");
+
+    let frame = plain(&app.render(80, 24));
+
+    assert!(
+        frame.contains("(10,10)"),
+        "intersection did not refresh: {frame}"
+    );
+}
+
+#[test]
 fn test_input_colors_a_typed_command_keyword() {
     let mut app = App::new();
 

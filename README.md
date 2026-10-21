@@ -287,6 +287,24 @@ Use `simplify` or its alias `simp`:
 
 The simplifier applies algebraic rewrite rules to produce a more compact symbolic expression. The exact result depends on the supported transformation rules.
 
+### Factoring Polynomials
+
+Use `fac` or its alias `factor` to factorise a polynomial exactly over the rationals:
+
+```text
+> fac x^2 - 1
+= (x + 1)(x - 1)
+
+> fac x^3 - x
+= x*(x + 1)(x - 1)
+
+> fac 6x^2 + 5x + 1
+= (2x + 1)(3x + 1)
+
+```
+
+Rational roots become linear factors, a repeated root becomes a power such as `(x + 1)^2`, and a leftover irreducible quadratic stays as it is (`fac x^4 - 1` gives `(x + 1)(x - 1)(x^2 + 1)`). A leading coefficient and a leading sign are moved outside the product (`fac -x^2 + 1` gives `-(x + 1)(x - 1)`). User-function calls are expanded to their bodies before factoring, so `fac f(x)` works when `f` is defined.
+
 ### Differentiation
 
 Use `diff`, `derive`, or `derivative` followed by an expression:
@@ -358,7 +376,9 @@ $$\int_{0}^{3} x^2 \, dx = 9$$
 
 
 
-Symbolic integration covers polynomials (including negative powers such as `1/x^2`), linear inner functions, the elementary functions, and the substitution rule $f'(x)\,g(f(x))$ — including natural-exponential factors such as `int 2x*e^(x^2)` and the identity case $\int F\,F' = F^2/2$ (for instance `int sin(x)*cos(x)`). Reciprocal patterns are recognized as well: $f'/f \to \ln|f|$ (`int 2x/(x^2+1)`), $1/(a+bx^2) \to \frac{1}{\sqrt{ab}}\arctan(x\sqrt{b/a})$ (`int 1/(x^2+1)`), and the exponential fraction $1/(c_0+c_1e^{kx})$ (`int 1/(e^(3x)+1)`). Integration by parts chooses $u$ by the LIATE order, so `int x*ln(x)` integrates the logarithm first (as opposed to a purely polynomial driver, `int (2x+1)*e^(2x)`). If no supported antiderivative is found, definite integration uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
+Symbolic integration covers polynomials (including negative powers such as `1/x^2`), linear inner functions, the elementary functions, and the substitution rule $f'(x)\,g(f(x))$ — including natural-exponential factors such as `int 2x*e^(x^2)` and the identity case $\int F\,F' = F^2/2$ (for instance `int sin(x)*cos(x)`). Reciprocal patterns are recognized as well: $f'/f \to \ln|f|$ (`int 2x/(x^2+1)`), $1/(a+bx^2) \to \frac{1}{\sqrt{ab}}\arctan(x\sqrt{b/a})$ (`int 1/(x^2+1)`), and the exponential fraction $1/(c_0+c_1e^{kx})$ (`int 1/(e^(3x)+1)`).
+
+Ratios of polynomials are integrated exactly through polynomial division and partial fractions: distinct linear factors ($\int \frac{dx}{x^2-1} = \frac12\ln|x-1| - \frac12\ln|x+1|$), repeated linear factors ($\int \frac{dx}{(x+1)^2} = -\frac{1}{x+1}$), improper fractions ($\int \frac{x^3}{x^2+1}\,dx = \frac{x^2}{2} - \frac12\ln(x^2+1)$), and irreducible quadratic factors with or without repetition ($\int \frac{dx}{x^2-4x+5} = \arctan(x-2)$, $\int \frac{dx}{(x^2+1)^2} = \frac{x}{2(x^2+1)} + \frac12\arctan(x)$). Integration by parts chooses $u$ by the LIATE order, so `int x*ln(x)` integrates the logarithm first (as opposed to a purely polynomial driver, `int (2x+1)*e^(2x)`). If no supported antiderivative is found, definite integration uses composite Simpson's rule with 1,000 subintervals. Numerical results are approximations when numerical integration is used.
 
 ### Solving Equations
 
@@ -450,6 +470,7 @@ The following commands are recognized by the command parser:
 | `clear all` | Clear variables, functions, equations, plots, history and the state file |
 | `clear history` | Wipe the output and forget its restorable copy and the input history |
 | `simplify` or `simp <expression>` | Simplify an expression |
+| `fac` or `factor <expression>` | Factorise a polynomial over the rationals |
 | `diff`, `derive`, `derivative <expression>` | Differentiate an expression |
 | `int`, `integral`, `integrate <expression>` | Compute an indefinite integral |
 | `int <expression>, <var>` | Integrate with respect to a chosen variable |

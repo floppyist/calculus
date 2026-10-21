@@ -13,6 +13,12 @@ fn source(expression: &str) -> String {
     crate::core::algebra::to_source(&node)
 }
 
+fn factored(expression: &str) -> String {
+    Environment::new()
+        .factor(expression)
+        .expect("factor failed")
+}
+
 fn derivative(expression: &str) -> String {
     let mut environment = Environment::new();
 
@@ -213,7 +219,7 @@ fn test_antiderivative_reciprocal() {
 #[test]
 fn test_antiderivative_negative_power() {
     assert_eq!(antiderivative("1/x^2"), "-x^-1 + C");
-    assert_eq!(antiderivative("1/(2*x+1)^2"), "-1/2*(2x + 1)^-1 + C");
+    assert_eq!(antiderivative("1/(2*x+1)^2"), "-1/4*(x + 1/2)^-1 + C");
 }
 
 #[test]
@@ -242,7 +248,10 @@ fn test_antiderivative_power_substitution() {
 #[test]
 fn test_antiderivative_logarithmic_derivative() {
     assert_eq!(antiderivative("2*x/(x^2+1)"), "ln(abs(x^2 + 1)) + C");
-    assert_eq!(antiderivative("3*x^2/(x^3+1)"), "ln(abs(x^3 + 1)) + C");
+    assert_eq!(
+        antiderivative("3*x^2/(x^3+1)"),
+        "ln(abs(x + 1)) + ln(abs(x^2 - x + 1)) + C"
+    );
 }
 
 #[test]
@@ -272,6 +281,48 @@ fn test_antiderivative_by_parts() {
 #[test]
 fn test_antiderivative_by_parts_prefers_logarithm() {
     assert_eq!(antiderivative("x*ln(x)"), "1/4*((2*ln(x) - 1)x^2) + C");
+}
+
+#[test]
+fn test_antiderivative_distinct_linear_denominator() {
+    assert_eq!(
+        antiderivative("1/((x-1)*(x+2))"),
+        "-1/3*ln(abs(x + 2)) + 1/3*ln(abs(x - 1)) + C"
+    );
+    assert_eq!(
+        antiderivative("1/(x^2-1)"),
+        "-1/2*ln(abs(x + 1)) + 1/2*ln(abs(x - 1)) + C"
+    );
+}
+
+#[test]
+fn test_antiderivative_improper_fraction_division() {
+    assert_eq!(
+        antiderivative("(x^2+1)/(x+1)"),
+        "1/2*x^2 - x + 2*ln(abs(x + 1)) + C"
+    );
+    assert_eq!(
+        antiderivative("x^3/(x^2+1)"),
+        "1/2*x^2 - 1/2*ln(abs(x^2 + 1)) + C"
+    );
+}
+
+#[test]
+fn test_antiderivative_irreducible_quadratic() {
+    assert_eq!(antiderivative("1/(x^2-4*x+5)"), "atan(x - 2) + C");
+    assert_eq!(antiderivative("1/(x^2+1)"), "atan(x) + C");
+}
+
+#[test]
+fn test_antiderivative_repeated_quadratic() {
+    assert_eq!(
+        antiderivative("1/(x^2+1)^2"),
+        "x/(2(x^2 + 1)) + 1/2*atan(x) + C"
+    );
+    assert_eq!(
+        antiderivative("(x^3+1)/(x^2-4*x+5)^2"),
+        "3((x - 2)/(2(x^2 - 4x + 5))) - 11/2*(x^2 - 4x + 5)^-1 + 15/2*atan(x - 2) + 1/2*ln(abs(x^2 - 4x + 5)) + C"
+    );
 }
 
 #[test]
@@ -690,4 +741,50 @@ fn test_sum_and_product_derivatives() {
     assert_eq!(derivative("sum(k,1,3,k*x^2)"), "∑(k, 1, 3, 2kx)");
     assert_eq!(derivative("prod(k,1,3,k)"), "0");
     assert_eq!(derivative("sum(k,1,3,k*x)"), "∑(k, 1, 3, k)");
+}
+
+#[test]
+fn test_factor_splits_rational_roots() {
+    assert_eq!(factored("x^2-1"), "(x + 1)(x - 1)");
+    assert_eq!(factored("x^2-4"), "(x + 2)(x - 2)");
+    assert_eq!(factored("x^3-6*x^2+11*x-6"), "(x - 1)(x - 2)(x - 3)");
+}
+
+#[test]
+fn test_factor_keeps_irreducible_quadratic() {
+    assert_eq!(factored("x^2+1"), "x^2 + 1");
+    assert_eq!(factored("x^4-1"), "(x + 1)(x - 1)(x^2 + 1)");
+}
+
+#[test]
+fn test_factor_treats_zero_root_as_x() {
+    assert_eq!(factored("x^3-x"), "x*(x + 1)(x - 1)");
+}
+
+#[test]
+fn test_factor_keeps_leading_coefficient() {
+    assert_eq!(factored("2*x^2+2*x"), "2(x*(x + 1))");
+    assert_eq!(factored("6*x^2+5*x+1"), "(2x + 1)(3x + 1)");
+}
+
+#[test]
+fn test_factor_moves_a_leading_sign_out() {
+    assert_eq!(factored("-x^2+1"), "-(x + 1)(x - 1)");
+}
+
+#[test]
+fn test_factor_handles_fraction_coefficients() {
+    assert_eq!(factored("0.5*x^2-2"), "1/2*((x + 2)(x - 2))");
+}
+
+#[test]
+fn test_factor_expands_user_calls_before_factoring() {
+    let mut environment = Environment::new();
+
+    environment.execute("f(x)=x^2-1").expect("define failed");
+
+    assert_eq!(
+        environment.factor("f(x)").expect("factor failed"),
+        "(x + 1)(x - 1)"
+    );
 }
